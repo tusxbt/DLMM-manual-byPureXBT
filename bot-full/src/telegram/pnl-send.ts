@@ -62,6 +62,8 @@ export function cardDataFromSnapshot(s: PositionSnapshot, closed: boolean, now =
     maxPrice: s.max_price ?? null,
     entryPrice: s.entry_price ?? null,
     exitPrice: s.active_price ?? null,
+    entryTime: s.opened_at && Number.isFinite(Date.parse(s.opened_at)) ? Math.floor(Date.parse(s.opened_at) / 1000) : undefined,
+    exitTime: Math.floor(now.getTime() / 1000),
     timeLabel: kstStamp(now),
   };
 }

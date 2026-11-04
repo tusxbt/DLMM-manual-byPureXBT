@@ -54,3 +54,25 @@ test("render PnL card PNG (with and without chart)", () => {
   const bare = renderPnlCard({ pair: "X/SOL", position: "P", closed: false, depositUsd: null, exitUsd: null, feesUsd: null, pnlUsd: null, pnlPct: null, duration: null, minPrice: null, maxPrice: null, timeLabel: "-" });
   assert.ok(bare.length > 1000);
 });
+
+import { fillGaps, chartWindow } from "../src/engine/ohlcv.js";
+import { niceTicks } from "../src/render/pnl-card.js";
+
+test("fillGaps: continuous flat candles at prev close; head back-filled", () => {
+  const c = fillGaps([{ t: 600, o: 1, h: 2, l: 1, c: 1.5 }, { t: 1200, o: 1.5, h: 1.6, l: 1.4, c: 1.4 }], 300, 0, 1500);
+  assert.deepEqual(c.map((x) => x.t), [0, 300, 600, 900, 1200, 1500]);
+  assert.deepEqual(c[3], { t: 900, o: 1.5, h: 1.5, l: 1.5, c: 1.5 });
+  assert.equal(c[0].c, 1);
+  assert.deepEqual(fillGaps([], 60, 0, 600), []);
+});
+
+test("chart window padding + 60–120 candles", () => {
+  const w = chartWindow(10_000, 10_000 + 6 * 3600);
+  assert.ok(w.from < 10_000 && w.to > 10_000 + 6 * 3600);
+  for (const dur of [3600, 6 * 3600, 2 * 86400, 10 * 86400]) {
+    const ww = chartWindow(0, dur);
+    const n = (ww.to - ww.from) / pickTimeframe(ww.to - ww.from).step;
+    assert.ok(n <= 120 && n >= 30, `${dur}: ${n}`);
+  }
+  assert.deepEqual(niceTicks(0.00129, 0.00137, 5), [0.0013, 0.00132, 0.00134, 0.00136]);
+});
