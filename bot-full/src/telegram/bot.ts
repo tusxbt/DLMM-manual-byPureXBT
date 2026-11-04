@@ -15,7 +15,7 @@ import { hasWallet } from "../users/store.js";
 import { registerUsersUi, showWallet, allowedWithoutWallet, buildWithdrawTx, ONBOARD_TEXT, onboardKb } from "./users-ui.js";
 import { PublicKey } from "@solana/web3.js";
 import { getSession, resetSession } from "./session.js";
-import { mainMenuKeyboard, CANCEL_KB, confirmKeyboard } from "./menus.js";
+import { mainMenuKeyboard, CANCEL_KB, confirmKeyboard, addBackKeyboard } from "./menus.js";
 import { loadSettings } from "../store/settings.js";
 import { addTrackedPosition, loadTrackedPositions, removeTrackedPosition, upsertTrackedPosition, getTrackedPosition } from "../store/positions.js";
 import { partialKb, registerWideUi } from "./wide-ui.js";
@@ -174,12 +174,14 @@ export function createBot(): Bot {
     if (req.status === "expired" || Date.now() > req.expiresAt) {
       markConfirm(id, "expired");
       if (!yes) {
-        await ctx.editMessageText("❌ Dibatalkan.");
+        await ctx.editMessageText("❌ Dibatalkan.", req.purpose === "add" ? { reply_markup: addBackKeyboard() } : {});
         return;
       }
       const fresh = expiredAction(req);
       if (fresh.kind === "add") {
-        await ctx.editMessageText("⏰ Waktu habis — harga bisa berubah. Tekan 👀 Preview di panel Add untuk konfirmasi baru.");
+        await ctx.editMessageText("⏰ Waktu habis — harga bisa berubah. Preview lagi atau Kembali ke setup.", {
+          reply_markup: addBackKeyboard(),
+        });
         return;
       }
       if (fresh.kind === "zapout") {
@@ -202,7 +204,7 @@ export function createBot(): Bot {
     if (!yes) {
       cancelConfirm(id);
       if (req.purpose === "add") {
-        await ctx.editMessageText("❌ Dibatalkan. Tidak ada transaksi dikirim. Panel Add di atas masih bisa diedit.");
+        await ctx.editMessageText("❌ Dibatalkan. Tidak ada transaksi dikirim.", { reply_markup: addBackKeyboard() });
         return;
       }
       await ctx.editMessageText("❌ Dibatalkan. Tidak ada transaksi dikirim.");
@@ -404,6 +406,19 @@ async function runClose(ctx: Context, req: ConfirmRequest, statusMsgId?: number)
   }
 }
 
+/** Result replaces the status/preview message in place (falls back to a new message). */
+async function editOrSend(ctx: Context, msgId: number | undefined, text: string, kb: InlineKeyboard): Promise<void> {
+  if (msgId) {
+    try {
+      await ctx.api.editMessageText(ctx.chat!.id, msgId, text, { reply_markup: kb, link_preview_options: { is_disabled: true } });
+      return;
+    } catch {
+      /* fall through */
+    }
+  }
+  await ctx.reply(text, { reply_markup: kb });
+}
+
 async function executeConfirmed(ctx: Context, req: ConfirmRequest, statusMsgId?: number): Promise<void> {
   const id = req.id;
   markConfirm(id, "confirmed"); // prevents double execution (double tap / auto + tap)
@@ -419,20 +434,18 @@ async function executeConfirmed(ctx: Context, req: ConfirmRequest, statusMsgId?:
       const sigLines = (result.signatures || [])
         .map((s) => sigLine(s))
         .join("\n");
-      await ctx.reply(
-        [
-          result.success ? `✅ **${PURPOSE_LABEL[req.purpose] ?? req.purpose} berhasil**` : `❌ **${PURPOSE_LABEL[req.purpose] ?? req.purpose} gagal**`,
-          "",
-          result.message || result.error || "",
-          sigLines ? `\n🧾 Tx:\n${sigLines}` : "",
-        ]
-          .filter(Boolean)
-          .join("\n"),
-        { reply_markup: result.keyboard ?? mainMenuKeyboard() },
-      );
+      const text = [
+        result.success ? `✅ **${PURPOSE_LABEL[req.purpose] ?? req.purpose} berhasil**` : `❌ **${PURPOSE_LABEL[req.purpose] ?? req.purpose} gagal**`,
+        "",
+        result.message || result.error || "",
+        sigLines ? `\n🧾 Tx:\n${sigLines}` : "",
+      ]
+        .filter(Boolean)
+        .join("\n");
+      await editOrSend(ctx, progMsg, text, result.keyboard ?? mainMenuKeyboard());
     } catch (e) {
       markConfirm(id, "failed", (e as Error).message);
-      await ctx.reply(`❌ ${redactSecrets((e as Error).message)}`, { reply_markup: mainMenuKeyboard() });
+      await editOrSend(ctx, progMsg, `❌ ${redactSecrets((e as Error).message)}`, mainMenuKeyboard());
     }
     resetSession(chatKey(ctx));
 }

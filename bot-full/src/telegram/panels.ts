@@ -4,6 +4,8 @@ import { getSupplyUi, marketCap } from "../engine/supply.js";
 import { renderAddPreview, binArrayWarning, fundsLines } from "./preview.js";
 import { checkFunds } from "../engine/funds-check.js";
 import { presentConfirm } from "./confirm-ui.js";
+import { addBackKeyboard } from "./menus.js";
+import { cancelConfirm } from "../engine/confirm.js";
 import { InlineKeyboard, Keyboard, type Bot, type Context } from "grammy";
 import { loadConfig, CONFIRM_TTL_MS, SOL_MINT } from "../config.js";
 import { fmtNum, fmtUsd, shortAddr } from "../format.js";
@@ -238,10 +240,14 @@ async function deployPanel(ctx: Context): Promise<void> {
     });
     if (!funds.ok && !cfg.dryRun) {
       const warn = binArrayWarning(rent);
-      return renderAddPanel(
+      const s2 = getSession(key(ctx));
+      s2.data.panelMsgId = await upsert(
         ctx,
-        `${fundsLines(funds)}${warn ? `\n${warn}` : ""}\nKurangi nominal atau top-up SOL.`,
+        s2.data.panelMsgId,
+        `${fundsLines(funds)}${warn ? `\n\n${warn}` : ""}\n\nKurangi nominal atau top-up SOL.`,
+        addBackKeyboard(),
       );
+      return;
     }
     const sup = tokenMint(p) ? await getSupplyUi(tokenMint(p)!) : null;
     const summary = renderAddPreview({
@@ -277,8 +283,10 @@ async function deployPanel(ctx: Context): Promise<void> {
       summary,
       payload: { txs: built.txs, meta: { ...built.meta, entry_price: p.activePrice ?? null }, cost_usd: costUsd },
     });
-    await renderAddPanel(ctx, "Preview dikirim ⬇️ (Cancel = panel tetap bisa diedit).");
-    await presentConfirm(ctx, summary, req.id);
+    // same message: panel → Preview (Confirm / Cancel / ⬅️ Kembali)
+    const sess = getSession(key(ctx));
+    const prompted = await presentConfirm(ctx, summary, req.id, { msgId: sess.data.panelMsgId ?? ctx.callbackQuery?.message?.message_id, back: true });
+    void prompted;
   } catch (e) {
     await renderAddPanel(ctx, `❌ ${redactSecrets((e as Error).message)}`);
   }
@@ -290,6 +298,14 @@ export function registerAddPanel(bot: Bot): void {
     s.data.panelMsgId = ctx.callbackQuery?.message?.message_id ?? s.data.panelMsgId;
     return s;
   };
+  // Preview → back to setup panel (same message); the pending confirm is cancelled
+  bot.callbackQuery(/^ap:pvback:([a-f0-9]+)$/, async (ctx) => {
+    await ctx.answerCallbackQuery();
+    cancelConfirm(ctx.match![1]);
+    const s = track(ctx);
+    s.awaitingText = null;
+    await renderAddPanel(ctx);
+  });
   bot.callbackQuery("ap:back", async (ctx) => {
     await ctx.answerCallbackQuery();
     track(ctx).awaitingText = null;

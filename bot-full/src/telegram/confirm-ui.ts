@@ -38,7 +38,7 @@ export async function presentConfirm(
   ctx: Context,
   text: string,
   confirmId: string,
-  opts: { edit?: boolean; msgId?: number } = {},
+  opts: { edit?: boolean; msgId?: number; back?: boolean } = {},
 ): Promise<"prompted" | "auto"> {
   if (isAutoConfirm() && runner) {
     const req = takeAwaiting(confirmId);
@@ -60,13 +60,14 @@ export async function presentConfirm(
   }
   if (opts.msgId) {
     try {
-      await ctx.api.editMessageText(ctx.chat!.id, opts.msgId, text, { reply_markup: confirmKeyboard(confirmId) });
+      await ctx.api.editMessageText(ctx.chat!.id, opts.msgId, text, { reply_markup: confirmKeyboard(confirmId, { back: opts.back }) });
       return "prompted";
     } catch {
       /* fall through */
     }
   }
-  if (opts.edit) await ctx.editMessageText(text, { reply_markup: confirmKeyboard(confirmId) });
-  else await ctx.reply(text, { reply_markup: confirmKeyboard(confirmId) });
+  const kb = confirmKeyboard(confirmId, { back: opts.back });
+  if (opts.edit) await ctx.editMessageText(text, { reply_markup: kb });
+  else await ctx.reply(text, { reply_markup: kb });
   return "prompted";
 }

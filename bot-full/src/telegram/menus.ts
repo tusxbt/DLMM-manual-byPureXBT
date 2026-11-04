@@ -20,8 +20,16 @@ export function mainMenuKeyboard(): InlineKeyboard {
 
 export const CANCEL_KB = new InlineKeyboard().text("❌ Batal", "menu:cancel");
 
-export function confirmKeyboard(confirmId: string): InlineKeyboard {
-  return new InlineKeyboard()
+export function confirmKeyboard(confirmId: string, opts: { back?: boolean } = {}): InlineKeyboard {
+  const kb = new InlineKeyboard()
     .text("✅ Confirm", `confirm:yes:${confirmId}`)
     .text("❌ Cancel", `confirm:no:${confirmId}`);
+  // /add Preview: back to the (same-message) setup panel, settings preserved
+  if (opts.back) kb.row().text("⬅️ Kembali", `ap:pvback:${confirmId}`);
+  return kb;
+}
+
+/** In-place /add panel: back to setup + preview again. */
+export function addBackKeyboard(): InlineKeyboard {
+  return new InlineKeyboard().text("⬅️ Kembali", "ap:back").text("👀 Preview lagi", "ap:deploy");
 }
