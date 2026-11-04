@@ -125,106 +125,6 @@ function ensureThin(): void {
 }
 const thin = (ctx: SKRSContext2D, px: number) => (ctx.font = `${px}px CardThin, CardSans, sans-serif`);
 
-function rr(ctx: SKRSContext2D, x: number, y: number, w: number, h: number, r: number): void {
-  ctx.beginPath();
-  ctx.moveTo(x + r, y);
-  ctx.arcTo(x + w, y, x + w, y + h, r);
-  ctx.arcTo(x + w, y + h, x, y + h, r);
-  ctx.arcTo(x, y + h, x, y, r);
-  ctx.arcTo(x, y, x + w, y, r);
-  ctx.closePath();
-}
-
-function pill(ctx: SKRSContext2D, text: string, xRight: number, y: number, color: string, px = 14): void {
-  thin(ctx, px);
-  const tw = ctx.measureText(text).width;
-  const w = tw + px * 1.6;
-  const h = px * 1.9;
-  rr(ctx, xRight - w, y, w, h, 6);
-  ctx.fillStyle = "rgba(10,14,22,0.55)";
-  ctx.fill();
-  ctx.strokeStyle = color;
-  ctx.lineWidth = 1.5;
-  ctx.stroke();
-  ctx.fillStyle = color;
-  ctx.textAlign = "center";
-  ctx.fillText(text, xRight - w / 2, y + h * 0.68);
-  ctx.textAlign = "left";
-}
-
-/** Mini candle chart in a translucent panel (logical 1024x576 coords). */
-function drawPanelChart(ctx: SKRSContext2D, d: PnlCardData, x: number, y: number, w: number, h: number): void {
-  rr(ctx, x, y, w, h, 16);
-  ctx.fillStyle = "rgba(14,18,28,0.62)";
-  ctx.fill();
-  ctx.strokeStyle = "rgba(255,255,255,0.18)";
-  ctx.lineWidth = 1;
-  ctx.stroke();
-  thin(ctx, 13);
-  ctx.fillStyle = MUTED;
-  ctx.fillText("HARGA (SOL)", x + 20, y + 28);
-  const candles = d.candles || [];
-  const last = candles.length ? candles[candles.length - 1].c : null;
-  const px = d.exitPrice ?? last;
-  const inRange = px != null && d.minPrice != null && d.maxPrice != null ? px >= d.minPrice && px <= d.maxPrice : null;
-  if (inRange != null) pill(ctx, inRange ? "IN RANGE" : "OUT OF RANGE", x + w - 20, y + 12, inRange ? GREEN : RED, 12);
-
-  const cx = x + 20, cw = w - 40, cy = y + 56, ch = h - 100;
-  if (candles.length < 2) {
-    thin(ctx, 15);
-    ctx.fillStyle = MUTED;
-    ctx.fillText("Chart tidak tersedia", cx, cy + ch / 2);
-  } else {
-    const vals = candles.flatMap((c) => [c.h, c.l]);
-    for (const v of [d.minPrice, d.maxPrice]) if (v && v > 0) vals.push(v);
-    let lo = Math.min(...vals), hi = Math.max(...vals);
-    if (hi - lo < hi * 1e-6) { hi *= 1.01; lo *= 0.99; }
-    const useLog = hi / lo > 5;
-    const f = (v: number) => (useLog ? Math.log(v) : v);
-    const pad = (f(hi) - f(lo)) * 0.08;
-    const L = f(lo) - pad, Hh = f(hi) + pad;
-    const Y = (v: number) => cy + ch - ((f(v) - L) / (Hh - L)) * ch;
-    // range band
-    if (d.minPrice && d.maxPrice) {
-      const y1 = Y(d.maxPrice), y2 = Y(d.minPrice);
-      ctx.fillStyle = "rgba(129,140,248,0.16)";
-      ctx.fillRect(cx, y1, cw - 30, Math.max(2, y2 - y1));
-      ctx.setLineDash([7, 5]);
-      ctx.strokeStyle = "rgba(165,180,252,0.85)";
-      ctx.lineWidth = 1.2;
-      for (const yy of [y1, y2]) { ctx.beginPath(); ctx.moveTo(cx, yy); ctx.lineTo(cx + cw - 30, yy); ctx.stroke(); }
-      ctx.setLineDash([]);
-    }
-    const n = candles.length;
-    const slot = (cw - 30) / n;
-    const bw = Math.max(1.5, Math.min(12, slot * 0.62));
-    candles.forEach((c, i) => {
-      const mx = cx + (i + 0.5) * slot;
-      const col = c.c >= c.o ? "#2bd99f" : "#f2546b";
-      ctx.strokeStyle = col;
-      ctx.lineWidth = 1;
-      ctx.beginPath(); ctx.moveTo(mx, Y(c.h)); ctx.lineTo(mx, Y(c.l)); ctx.stroke();
-      const top = Y(Math.max(c.o, c.c)), bot = Y(Math.min(c.o, c.c));
-      ctx.fillStyle = col;
-      ctx.fillRect(mx - bw / 2, top, bw, Math.max(1.5, bot - top));
-    });
-    if (d.closed) {
-      const ex = cx + (n - 0.5) * slot + 6;
-      ctx.setLineDash([4, 4]);
-      ctx.strokeStyle = "rgba(255,255,255,0.75)";
-      ctx.beginPath(); ctx.moveTo(ex, cy - 4); ctx.lineTo(ex, cy + ch); ctx.stroke();
-      ctx.setLineDash([]);
-      pill(ctx, "EXIT", Math.min(x + w - 20, ex + 22), y + 42, "rgba(230,235,245,0.9)", 12);
-    }
-    thin(ctx, 12);
-    ctx.fillStyle = MUTED;
-    ctx.fillText(`HIGH ${fmtPx(Math.max(...candles.map((c) => c.h)))}`, x + 20, y + h - 18);
-    ctx.textAlign = "right";
-    ctx.fillText(`LOW ${fmtPx(Math.min(...candles.map((c) => c.l)))}`, x + w - 20, y + h - 18);
-    ctx.textAlign = "left";
-  }
-}
-
 const money = (n: number | null | undefined, sign = false) =>
   n == null || !Number.isFinite(n)
     ? "n/a"
@@ -233,109 +133,132 @@ const money = (n: number | null | undefined, sign = false) =>
 export function renderPnlCard(d: PnlCardData): Buffer {
   ensureFonts();
   ensureThin();
-  const S = 1.25; // 1280x720 output, logical 1024x576
-  const W = 1024, H = 576;
-  const c = createCanvas(W * S, H * S);
+  const W = 1200, H = 800;
+  const c = createCanvas(W, H);
   const ctx = c.getContext("2d");
-  ctx.scale(S, S);
   const up = d.pnlUsd == null || d.pnlUsd >= 0;
-  const tint = up ? "52,211,153" : "251,113,133";
-  const base = ctx.createLinearGradient(0, 0, W, H);
-  base.addColorStop(0, "#0d1530");
-  base.addColorStop(0.6, "#070a14");
-  base.addColorStop(1, "#020306");
-  ctx.fillStyle = base;
+  const col = d.pnlUsd == null ? MUTED : up ? UP : DOWN;
+  const rgb = up ? "52,211,153" : "251,113,133";
+
+  ctx.fillStyle = "#0b0f14";
   ctx.fillRect(0, 0, W, H);
   const bg = loadBg(d.background);
   if (bg) {
     const k = Math.max(W / bg.width, H / bg.height);
-    const iw = bg.width * k, ih = bg.height * k;
-    const blur = Number(process.env.PNL_BG_BLUR ?? 0);
-    if (blur > 0) ctx.filter = `blur(${blur}px)`;
-    ctx.drawImage(bg, (W - iw) / 2, (H - ih) / 2, iw, ih);
-    ctx.filter = "none";
-    ctx.fillStyle = "rgba(4,6,12,0.6)";
+    ctx.drawImage(bg, (W - bg.width * k) / 2, (H - bg.height * k) / 2, bg.width * k, bg.height * k);
+    ctx.fillStyle = "rgba(11,15,20,0.7)";
     ctx.fillRect(0, 0, W, H);
   }
-  // subtle grid
-  ctx.strokeStyle = "rgba(148,163,255,0.05)";
-  ctx.lineWidth = 1;
-  for (let gx = 0; gx <= W; gx += 32) { ctx.beginPath(); ctx.moveTo(gx, 0); ctx.lineTo(gx, H); ctx.stroke(); }
-  for (let gy = 0; gy <= H; gy += 32) { ctx.beginPath(); ctx.moveTo(0, gy); ctx.lineTo(W, gy); ctx.stroke(); }
-  // glows: brand violet top-right, PnL tint bottom-left
-  const glow = (x: number, y: number, r: number, rgb: string, a: number) => {
-    const g = ctx.createRadialGradient(x, y, 0, x, y, r);
-    g.addColorStop(0, `rgba(${rgb},${a})`);
-    g.addColorStop(1, `rgba(${rgb},0)`);
-    ctx.fillStyle = g;
-    ctx.fillRect(0, 0, W, H);
+  // one soft accent: glow behind the number
+  const g = ctx.createRadialGradient(W / 2, 250, 0, W / 2, 250, 420);
+  g.addColorStop(0, `rgba(${rgb},0.13)`);
+  g.addColorStop(1, `rgba(${rgb},0)`);
+  ctx.fillStyle = g;
+  ctx.fillRect(0, 0, W, H);
+
+  const center = (t: string, y: number, px: number, color: string) => {
+    thin(ctx, px);
+    ctx.fillStyle = color;
+    ctx.textAlign = "center";
+    ctx.fillText(t, W / 2, y);
+    ctx.textAlign = "left";
   };
-  glow(860, 60, 420, "139,92,246", 0.22);
-  glow(180, 420, 380, tint, 0.2);
-  // soft accent shapes: tilted rings
-  ctx.save();
-  ctx.translate(800, 470);
-  ctx.rotate(-0.35);
-  for (const [r, a] of [[180, 0.08], [240, 0.05], [300, 0.03]] as const) {
-    ctx.strokeStyle = `rgba(${tint},${a})`;
-    ctx.lineWidth = 2;
+  // brand + pair line
+  center("D L M M   B O S K U", 78, 18, MUTED);
+  const pairLine = [d.pair.replace("-", "/"), d.strategy].filter(Boolean).join("  ·  ");
+  center(pairLine, 128, 30, TEXT);
+
+  // big PnL %
+  const pct = d.pnlPct == null ? "n/a" : `${d.pnlPct >= 0 ? "+" : "−"}${Math.abs(d.pnlPct).toFixed(2)}%`;
+  center(pct, 270, 120, col);
+  center(money(d.pnlUsd, true), 330, 40, col);
+  center(d.source && d.source !== "Meteora" ? "PnL estimasi" : "PnL · Meteora", 368, 16, MUTED);
+
+  // full-width minimal area chart
+  const cx = 70, cw = W - 140, cy = 410, ch = 170;
+  const candles = d.candles || [];
+  if (candles.length >= 2) {
+    const closes = candles.map((k) => k.c);
+    const vals = [...closes];
+    for (const v of [d.minPrice, d.maxPrice]) if (v && v > 0) vals.push(v);
+    let lo = Math.min(...vals), hi = Math.max(...vals);
+    if (hi - lo < hi * 1e-6) { hi *= 1.01; lo *= 0.99; }
+    const useLog = hi / lo > 5;
+    const f = (v: number) => (useLog ? Math.log(v) : v);
+    const pad = (f(hi) - f(lo)) * 0.1;
+    const L = f(lo) - pad, Hh = f(hi) + pad;
+    const Y = (v: number) => cy + ch - ((f(v) - L) / (Hh - L)) * ch;
+    const X = (i: number) => cx + (i / (closes.length - 1)) * cw;
+    if (d.minPrice && d.maxPrice) {
+      const y1 = Y(d.maxPrice), y2 = Y(d.minPrice);
+      ctx.fillStyle = "rgba(148,163,184,0.07)";
+      ctx.fillRect(cx, y1, cw, Math.max(2, y2 - y1));
+      thin(ctx, 13);
+      ctx.fillStyle = "rgba(148,163,184,0.6)";
+      ctx.textAlign = "right";
+      ctx.fillText(`range ${fmtPx(d.minPrice)} – ${fmtPx(d.maxPrice)} SOL`, cx + cw, Math.min(cy + ch + 24, y2 + 20));
+      ctx.textAlign = "left";
+    }
+    const area = ctx.createLinearGradient(0, cy, 0, cy + ch);
+    area.addColorStop(0, `rgba(${rgb},0.22)`);
+    area.addColorStop(1, `rgba(${rgb},0)`);
     ctx.beginPath();
-    ctx.ellipse(0, 0, r, r * 0.42, 0, 0, Math.PI * 2);
+    closes.forEach((v, i) => (i ? ctx.lineTo(X(i), Y(v)) : ctx.moveTo(X(i), Y(v))));
+    ctx.lineTo(X(closes.length - 1), cy + ch);
+    ctx.lineTo(X(0), cy + ch);
+    ctx.closePath();
+    ctx.fillStyle = area;
+    ctx.fill();
+    ctx.beginPath();
+    closes.forEach((v, i) => (i ? ctx.lineTo(X(i), Y(v)) : ctx.moveTo(X(i), Y(v))));
+    ctx.strokeStyle = col;
+    ctx.lineWidth = 2.5;
+    ctx.lineJoin = "round";
     ctx.stroke();
+    const dot = (x: number, y: number, fill: string, label: string, right: boolean) => {
+      ctx.beginPath(); ctx.arc(x, y, 6, 0, Math.PI * 2); ctx.fillStyle = fill; ctx.fill();
+      ctx.lineWidth = 2; ctx.strokeStyle = "#0b0f14"; ctx.stroke();
+      thin(ctx, 13); ctx.fillStyle = MUTED; ctx.textAlign = right ? "right" : "left";
+      ctx.fillText(label, x + (right ? -12 : 12), y - 10); ctx.textAlign = "left";
+    };
+    dot(X(0), Y(d.entryPrice ?? closes[0]), TEXT, "entry", false);
+    if (d.closed) dot(X(closes.length - 1), Y(d.exitPrice ?? closes[closes.length - 1]), col, "exit", true);
+  } else {
+    center("chart tidak tersedia", cy + ch / 2, 16, MUTED);
   }
-  ctx.restore();
 
-  // header
-  thin(ctx, 22);
-  ctx.fillStyle = TEXT;
-  ctx.fillText("DLMM BOSKU", 56, 58);
-  thin(ctx, 14);
-  ctx.fillStyle = ACCENT;
-  ctx.fillText("meteora dlmm · manual LP", 56, 80);
-  ctx.fillRect(56, 93, 64, 3);
-  ctx.fillStyle = "rgba(255,255,255,0.12)";
-  ctx.fillRect(120, 94, 300, 1);
-  pill(ctx, d.exitLabel || (d.closed ? "MANUAL EXIT" : "OPEN"), W - 40, 40, "rgba(230,235,245,0.9)", 14);
-
-  // left
-  const pnlColor = d.pnlUsd == null ? MUTED : d.pnlUsd >= 0 ? UP : DOWN;
-  const label = (t: string, y: number) => { thin(ctx, 13); ctx.fillStyle = MUTED; ctx.fillText(t, 56, y); };
-  label("DURASI", 150);
-  thin(ctx, 28); ctx.fillStyle = TEXT; ctx.fillText((d.duration ?? "n/a").toUpperCase(), 56, 186);
-  label("PAIR", 232);
-  thin(ctx, 42); ctx.fillStyle = TEXT; ctx.fillText(d.pair.replace("/", "-").slice(0, 16), 56, 276);
-  label(`${d.pnlUsd != null && d.pnlUsd < 0 ? "LOSS" : "PROFIT"} (USD)${d.source && d.source !== "Meteora" ? " · estimasi" : ""}`, 324);
-  thin(ctx, 64); ctx.fillStyle = pnlColor; ctx.fillText(money(d.pnlUsd, true), 56, 392);
-
-  drawPanelChart(ctx, d, 560, 128, 416, 256);
+  // stats: single row of 6
+  const last = candles.length ? candles[candles.length - 1].c : null;
+  const px = d.exitPrice ?? last;
+  const inR = px != null && d.minPrice != null && d.maxPrice != null ? px >= d.minPrice && px <= d.maxPrice : null;
+  const stats: Array<[string, string, string]> = [
+    ["Modal", d.modal || money(d.depositUsd), TEXT],
+    [d.closed ? "Exit" : "Nilai", money(d.exitUsd), TEXT],
+    ["Fees", money(d.feesUsd), d.feesUsd != null && d.feesUsd > 0 ? UP : TEXT],
+    ["Durasi", d.duration ?? "n/a", TEXT],
+    ["Bins", d.bins != null ? String(d.bins) : "n/a", TEXT],
+    ["Range", inR == null ? "n/a" : inR ? "in range" : "out", inR == null ? TEXT : inR ? UP : DOWN],
+  ];
+  const sw = (W - 140) / stats.length;
+  stats.forEach(([k, v, cl], i) => {
+    const x = 70 + sw * i + sw / 2;
+    ctx.textAlign = "center";
+    thin(ctx, 14); ctx.fillStyle = MUTED; ctx.fillText(k.toUpperCase(), x, 652);
+    let fpx = 26; thin(ctx, fpx);
+    while (ctx.measureText(v).width > sw - 12 && fpx > 14) thin(ctx, --fpx);
+    ctx.fillStyle = cl; ctx.fillText(v, x, 688);
+  });
+  ctx.textAlign = "left";
 
   // footer
-  ctx.fillStyle = "rgba(255,255,255,0.14)";
-  ctx.fillRect(56, 465, W - 112, 1);
-  const pct = d.pnlPct == null ? "n/a" : `${d.pnlPct >= 0 ? "+" : ""}${d.pnlPct.toFixed(2)}%`;
-  const cols: Array<[string, string, string]> = [
-    ["STRATEGI", d.strategy || "n/a", TEXT],
-    ["MODAL", d.modal || money(d.depositUsd), TEXT],
-    ["BINS", d.bins != null ? String(d.bins) : "n/a", TEXT],
-    ["FEES", money(d.feesUsd), d.feesUsd != null && d.feesUsd > 0 ? UP : TEXT],
-    [d.closed ? "NILAI EXIT" : "NILAI", money(d.exitUsd), TEXT],
-    ["PNL", pct, d.pnlPct == null ? MUTED : d.pnlPct >= 0 ? UP : DOWN],
-  ];
-  const colW = (W - 112) / cols.length;
-  cols.forEach(([k, v, col], i) => {
-    const x = 56 + i * colW;
-    thin(ctx, 12); ctx.fillStyle = MUTED; ctx.fillText(k, x, 494);
-    let px = 22;
-    thin(ctx, px);
-    while (ctx.measureText(v).width > colW - 10 && px > 12) thin(ctx, --px);
-    ctx.fillStyle = col; ctx.fillText(v, x, 524);
-  });
-  thin(ctx, 12);
+  ctx.fillStyle = "rgba(255,255,255,0.06)";
+  ctx.fillRect(70, 730, W - 140, 1);
+  thin(ctx, 14);
   ctx.fillStyle = MUTED;
+  ctx.fillText(`${d.exitLabel ? d.exitLabel.toLowerCase() + " · " : ""}${d.timeLabel}`, 70, 764);
   ctx.textAlign = "right";
-  ctx.fillText(d.timeLabel, W - 56, 556);
+  ctx.fillStyle = TEXT;
+  ctx.fillText("@dlmmbosku_bot", W - 70, 764);
   ctx.textAlign = "left";
-  ctx.fillStyle = ACCENT;
-  ctx.fillText("@dlmmbosku_bot", 56, 556);
   return c.toBuffer("image/png");
 }
