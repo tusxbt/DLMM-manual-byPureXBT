@@ -12,7 +12,7 @@ import { fmtNum, fmtUsd, shortAddr } from "../format.js";
 import { redactSecrets } from "../logger.js";
 import { getSession, resetSession } from "./session.js";
 import { confirmKeyboard, mainMenuKeyboard } from "./menus.js";
-import { loadSettings, saveSettings } from "../store/settings.js";
+import { loadSettings, saveSettings, type Settings } from "../store/settings.js";
 import { searchPools, getActiveBin } from "../engine/dlmm-read.js";
 import { buildAddLiquidityTxs } from "../engine/dlmm-build.js";
 import { getSolUsd } from "../engine/prices.js";
@@ -48,6 +48,7 @@ import {
   tokenSymbol,
   tokenMint,
   MAX_BINS_PER_POSITION,
+  DEFAULT_BIN_PRESETS,
   pctLabel,
 } from "./add-panel.js";
 import { PublicKey } from "@solana/web3.js";
@@ -569,6 +570,8 @@ function settingsKb(): InlineKeyboard {
     .row()
     .text("✏️ Amount presets", "st:edit:presets")
     .row()
+    .text("🎛 Tombol preset", "st:pre")
+    .row()
     .text("✏️ Bin presets", "st:edit:bins")
     .text("✏️ Range % presets", "st:edit:pct")
     .row()
@@ -649,6 +652,44 @@ export function registerSettingsPanel(bot: Bot): void {
     await renderSettings(ctx, a === "on" ? `${AUTO_BADGE} (hanya Exit & ⚡ → SOL).` : "Auto confirm close OFF.");
   });
 
+  // Per-slot editing of /add quick-pick buttons (bins + amount), per user
+  bot.callbackQuery("st:pre", async (ctx) => {
+    await ctx.answerCallbackQuery();
+    const s = getSession(key(ctx));
+    s.awaitingText = null;
+    s.data.settingsMsgId = ctx.callbackQuery.message?.message_id ?? s.data.settingsMsgId;
+    s.data.settingsMsgId = await upsert(ctx, s.data.settingsMsgId, presetSlotsText(loadSettings()), presetSlotsKb(loadSettings()));
+  });
+  bot.callbackQuery("st:pre:reset", async (ctx) => {
+    await ctx.answerCallbackQuery({ text: "Preset direset" });
+    const st = resetPresetSlots(loadSettings());
+    saveSettings(st);
+    const s = getSession(key(ctx));
+    s.data.settingsMsgId = await upsert(ctx, s.data.settingsMsgId, presetSlotsText(st, "Direset ke default."), presetSlotsKb(st));
+  });
+  bot.callbackQuery(/^st:slot:(bin|amt):(narrow|medium|wide|0|1|2)$/, async (ctx) => {
+    await ctx.answerCallbackQuery();
+    const s = getSession(key(ctx));
+    s.data.settingsMsgId = ctx.callbackQuery.message?.message_id ?? s.data.settingsMsgId;
+    const kind = ctx.match![1] as "bin" | "amt";
+    const slot = ctx.match![2];
+    const st0 = loadSettings();
+    const cur = kind === "bin" ? st0.binPresets[slot as "narrow"] : st0.amountPresets[Number(slot)];
+    s.awaitingText = async (text) => {
+      await deleteUserMsg(ctx);
+      const st = loadSettings();
+      const r = applyPresetSlot(st, kind, slot, text);
+      if (r.error) {
+        s.data.settingsMsgId = await upsert(ctx, s.data.settingsMsgId, presetSlotsText(st, `❌ ${r.error}`), presetSlotsKb(st));
+        return;
+      }
+      s.awaitingText = null;
+      saveSettings(r.settings!);
+      s.data.settingsMsgId = await upsert(ctx, s.data.settingsMsgId, presetSlotsText(r.settings!, "✅ Tersimpan — dipakai di panel /add."), presetSlotsKb(r.settings!));
+    };
+    const label = kind === "bin" ? `bins slot ${slotNo(slot)} (1–${MAX_BINS_PER_POSITION})` : `amount slot ${Number(slot) + 1} (SOL, > 0)`;
+    s.data.settingsMsgId = await upsert(ctx, s.data.settingsMsgId, `✏️ Ketik nilai baru untuk ${label}.\nSekarang: ${cur ?? "-"}`, new InlineKeyboard().text("⬅️ Kembali", "st:pre"));
+  });
   bot.callbackQuery("st:back", async (ctx) => {
     await ctx.answerCallbackQuery();
     getSession(key(ctx)).awaitingText = null;
@@ -749,3 +790,57 @@ export const BOT_COMMANDS: { command: string; description: string }[] = [
   { command: "cancel", description: "Batalkan alur yang berjalan" },
   { command: "start", description: "Mulai / menu utama" },
 ];
+
+
+// ---- per-slot preset editor (pure helpers exported for tests) ----
+const BIN_SLOTS = ["narrow", "medium", "wide"] as const;
+const slotNo = (slot: string) => (BIN_SLOTS.indexOf(slot as never) >= 0 ? BIN_SLOTS.indexOf(slot as never) + 1 : Number(slot) + 1);
+export const DEFAULT_AMOUNT_PRESETS = [0.5, 1, 2];
+
+export function presetSlotsText(st: Settings, note?: string): string {
+  const b = st.binPresets;
+  const a = amountSlots(st);
+  return [
+    "**🎛 Tombol preset /add**",
+    "",
+    `Bins: ${b.narrow}b · ${b.medium}b · ${b.wide}b`,
+    `Amount: ${a.join(" · ")} SOL`,
+    "",
+    "Tap tombol untuk ganti nilainya.",
+    note ? `\nℹ️ ${note}` : null,
+  ].filter((x) => x !== null).join("\n");
+}
+
+export function amountSlots(st: Settings): number[] {
+  const a = st.amountPresets.slice(0, 3);
+  while (a.length < 3) a.push(DEFAULT_AMOUNT_PRESETS[a.length]);
+  return a;
+}
+
+export function presetSlotsKb(st: Settings): InlineKeyboard {
+  const kb = new InlineKeyboard();
+  for (const k of BIN_SLOTS) kb.text(`✏️ ${st.binPresets[k]}b`, `st:slot:bin:${k}`);
+  kb.row();
+  amountSlots(st).forEach((a, i) => kb.text(`✏️ ${a} SOL`, `st:slot:amt:${i}`));
+  return kb.row().text("♻️ Reset default", "st:pre:reset").text("⬅️ Settings", "st:back");
+}
+
+export function applyPresetSlot(st: Settings, kind: "bin" | "amt", slot: string, text: string): { settings?: Settings; error?: string } {
+  const n = Number(String(text).trim().replace(",", ".").replace(/(sol|b|bins)$/i, "").trim());
+  const next: Settings = { ...st, binPresets: { ...st.binPresets }, amountPresets: amountSlots(st) };
+  if (kind === "bin") {
+    if (!BIN_SLOTS.includes(slot as never)) return { error: "Slot tidak dikenal." };
+    if (!Number.isInteger(n) || n < 1 || n > MAX_BINS_PER_POSITION) return { error: `Bins harus angka bulat 1–${MAX_BINS_PER_POSITION}.` };
+    next.binPresets[slot as "narrow"] = n;
+  } else {
+    const i = Number(slot);
+    if (!(i >= 0 && i <= 2)) return { error: "Slot tidak dikenal." };
+    if (!Number.isFinite(n) || n <= 0 || n > 100_000) return { error: "Amount harus angka SOL > 0 (mis. 0.25)." };
+    next.amountPresets[i] = Math.round(n * 1e6) / 1e6;
+  }
+  return { settings: next };
+}
+
+export function resetPresetSlots(st: Settings): Settings {
+  return { ...st, binPresets: { ...DEFAULT_BIN_PRESETS }, amountPresets: [...DEFAULT_AMOUNT_PRESETS] };
+}
