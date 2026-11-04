@@ -21,7 +21,7 @@ async function main() {
   const card = {
     position: "7b9f6yDvVthv3BXDL6isBWe8gcrbjBVvXrJz7yKV1tcg", pool: "5rCf1DM8LjKTw4YqhnoLcngyZYeNnQqztScTogYHAS6", pair: "Donkey/SOL",
     total_value_usd: 49.06, unclaimed_fees_usd: 0.62, pnl_usd: 0.5, pnl_pct: 1.0, in_range: true, active_id: 10, bin_step: 100,
-    min_price: 0.00000116, max_price: 0.00000425, active_price: 0.00000414, min_bin: 0, max_bin: 69, mint_x: "x", mint_y: "So11111111111111111111111111111111111111112",
+    min_price: 0.00000116, max_price: 0.00000425, active_price: 0.00000414, min_bin: 0, max_bin: 69, active_id: 66, bin_mask: "1".repeat(38) + "0".repeat(28) + "1".repeat(4), mint_x: "x", mint_y: "So11111111111111111111111111111111111111112",
     opened_at: "2026-11-04T21:10:00+09:00", cost_usd: 48.59, strategy_text: "Mix 70/30", meteora: met, mc_min: 1_160_000, mc_max: 4_250_000, mc_now: 4_140_000,
   };
   const preview = renderAddPreview({

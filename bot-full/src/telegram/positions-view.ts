@@ -40,6 +40,35 @@ export function fmtTinyPrice(n: number | null | undefined): string {
 }
 
 /** Text bar of current price inside [min,max]: "−96% ━━━━━━━━━━●━ +4%". */
+/**
+ * Bin fill bar, downsampled to `width` buckets: █ ≥50% of bins in bucket hold liquidity, ▒ some, ░ none.
+ * Active bin marked ▼ (inside) or ◀/▶ at the edge when out of range.
+ */
+export function binBar(mask: string, minBin: number, activeId: number | null | undefined, width = 16): { bar: string; filled: number; total: number } {
+  const total = mask.length;
+  const filled = [...mask].filter((c) => c === "1").length;
+  const w = Math.max(1, Math.min(width, total));
+  const cells: string[] = [];
+  for (let k = 0; k < w; k++) {
+    const a = Math.floor((k * total) / w);
+    const b = Math.max(a + 1, Math.floor(((k + 1) * total) / w));
+    const seg = mask.slice(a, b);
+    const f = [...seg].filter((c) => c === "1").length / seg.length;
+    cells.push(f >= 0.5 ? "█" : f > 0 ? "▒" : "░");
+  }
+  let bar = cells.join("");
+  if (activeId != null) {
+    const i = activeId - minBin;
+    if (i < 0) bar = `◀${bar}`;
+    else if (i >= total) bar = `${bar}▶`;
+    else {
+      const k = Math.min(w - 1, Math.floor((i * w) / total));
+      bar = cells.slice(0, k).join("") + "▼" + cells.slice(k + 1).join("");
+    }
+  }
+  return { bar, filled, total };
+}
+
 export function rangeBar(min: number, max: number, now: number, width = 16): string {
   if (!(min > 0 && max > min && now > 0)) return "";
   const lo = (min / now - 1) * 100;
@@ -94,6 +123,11 @@ export function renderPositionCard(p: PositionCard, now = new Date()): string {
     if (p.active_price) out.push(rangeBar(p.min_price, p.max_price, p.active_price));
   } else {
     out.push(`📐 bins ${p.min_bin ?? "?"}–${p.max_bin ?? "?"} (aktif ${p.active_id ?? "?"})`);
+  }
+  if (p.bin_mask && p.min_bin != null) {
+    const b = binBar(p.bin_mask, p.min_bin, p.active_id);
+    out.push(`🧱 ${b.bar}`);
+    out.push(`Bins terisi: ${b.filled}/${b.total}`);
   }
   out.push("");
   out.push(p.in_range == null ? "⚪ Range ?" : p.in_range ? "🟢 In-range" : "🔴 Out-of-range");

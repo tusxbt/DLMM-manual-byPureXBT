@@ -64,6 +64,8 @@ _max line: 43 chars_
 📐 0.0₅116–0.0₅425 (now 0.0₅414) Donkey/SOL
 🏷 MC $1.16M–$4.25M (now $4.14M)
 −72% ▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬● +3%
+🧱 █████████░░░░░░▼
+Bins terisi: 42/70
 
 🟢 In-range
 
@@ -84,7 +86,7 @@ Fee: $1.24
 In range: 1/2
 
 Pilih posisi ⬇️
-🕐 01:38:41 KST
+🕐 07:20:05 KST
 ```
 
 ## Close / Zapout result (+ ℹ️ Detail button)
