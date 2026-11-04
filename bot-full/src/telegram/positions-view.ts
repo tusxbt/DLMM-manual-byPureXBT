@@ -1,3 +1,7 @@
+import { getSupplyUi, marketCap, mcRangeText } from "../engine/supply.js";
+import { getSolUsd } from "../engine/prices.js";
+import { SOL_MINT, USDC_MINT } from "../config.js";
+import { fetchPnlForPools, type MeteoraPnl } from "../engine/meteora-pnl.js";
 import { sendPnlCard, snapshotOf } from "./pnl-send.js";
 import { presentConfirm, isAutoConfirm, AUTO_BADGE } from "./confirm-ui.js";
 /**
@@ -60,14 +64,17 @@ export function kstTime(d = new Date()): string {
   return d.toLocaleTimeString("en-GB", { timeZone: "Asia/Seoul", hour12: false });
 }
 
-export type PositionCard = LivePosition & { pair?: string; pool_name?: string; entry_price?: number; opened_at?: string; cost_usd?: number; strategy_text?: string; partial?: boolean };
+export type PositionCard = LivePosition & { pair?: string; pool_name?: string; entry_price?: number; opened_at?: string; cost_usd?: number; strategy_text?: string; partial?: boolean; meteora?: MeteoraPnl | null; mc_min?: number | null; mc_max?: number | null; mc_now?: number | null };
 
 export function renderPositionCard(p: PositionCard, now = new Date()): string {
   const pair = p.pair || "TOKEN/SOL";
+  const m = p.meteora && p.meteora.pnlUsd != null ? p.meteora : null;
+  const pu = m ? m.pnlUsd : p.pnl_usd;
+  const pp = m ? m.pnlPct : p.pnl_pct;
   const pnl =
-    p.pnl_usd == null || p.pnl_pct == null
-      ? "📈 PnL n/a (deposit USD tidak tercatat)"
-      : `${p.pnl_usd >= 0 ? "📈 +" : "📉 −"}$${Math.abs(p.pnl_usd).toFixed(2)} (${p.pnl_pct >= 0 ? "+" : "−"}${Math.abs(p.pnl_pct).toFixed(2)}%)`;
+    pu == null || pp == null
+      ? "📈 PnL n/a (harga/deposit tidak diketahui)"
+      : `${pu >= 0 ? "📈 +" : "📉 −"}$${Math.abs(pu).toFixed(2)} (${pp >= 0 ? "+" : "−"}${Math.abs(pp).toFixed(2)}%)${m ? " · Meteora" : " · estimasi"}`;
   const lines = [
     `**${pair}** · ${shortAddr(p.position)} [DLMM]`,
     p.strategy_text || p.min_bin != null
@@ -77,11 +84,13 @@ export function renderPositionCard(p: PositionCard, now = new Date()): string {
     "",
     `📊 Value: ${usdOrNa(p.total_value_usd)}`,
     pnl,
-    `💵 Fee berjalan: ${usdOrNa(p.unclaimed_fees_usd)}`,
+    `💵 Fee berjalan: ${usdOrNa(m?.unclaimedFeesUsd ?? p.unclaimed_fees_usd)}`,
+    m ? `🏦 Deposit ${usdOrNa(m.depositUsd)} · fee total ${usdOrNa(m.feesUsd)}` : null,
     "",
   ].filter((x): x is string => x !== null);
   if (p.min_price != null && p.max_price != null) {
     lines.push(`📐 ${fmtTinyPrice(p.min_price)}–${fmtTinyPrice(p.max_price)} (now ${fmtTinyPrice(p.active_price)}) ${pair}`);
+    lines.push(`🏷 ${mcRangeText(p.mc_min ?? null, p.mc_max ?? null, p.mc_now ?? null)}`);
     const bar = p.active_price ? rangeBar(p.min_price, p.max_price, p.active_price) : "";
     if (bar) lines.push(bar);
   } else {
@@ -132,8 +141,29 @@ async function loadCards(): Promise<PositionCard[]> {
   const cost: Record<string, number> = {};
   for (const t of tracked) if (t.cost_usd) cost[t.position] = t.cost_usd;
   const live = await listLivePositions(cost);
+  // Meteora datapi PnL (same as UI) — one fetch per pool per refresh; missing → own 'estimasi'
+  let met = new Map<string, MeteoraPnl>();
+  try {
+    const wallet = loadConfig({ requireTelegram: false, skipWallet: true }).walletPublicKey.toBase58();
+    met = await fetchPnlForPools(live.map((p) => p.pool), wallet, "open");
+  } catch {
+    /* fallback */
+  }
+  // market cap: price × quote USD × on-chain supply (cached per mint)
+  let solUsd: number | null = null;
+  try {
+    solUsd = await getSolUsd();
+  } catch {
+    solUsd = null;
+  }
+  const quoteUsd = (mint?: string) => (mint === SOL_MINT ? solUsd : mint === USDC_MINT ? 1 : null);
+  const supplies = new Map<string, number | null>();
+  await Promise.all([...new Set(live.map((p) => p.mint_x).filter(Boolean) as string[])].map(async (m) => supplies.set(m, await getSupplyUi(m))));
   const out: PositionCard[] = [];
   for (const p of live) {
+    const sup = p.mint_x ? supplies.get(p.mint_x) : null;
+    const qu = quoteUsd(p.mint_y);
+    const mc = { mc_min: marketCap(p.min_price, qu, sup), mc_max: marketCap(p.max_price, qu, sup), mc_now: marketCap(p.active_price, qu, sup) };
     const t = tracked.find((x) => x.position === p.position);
     out.push({
       ...p,
@@ -142,6 +172,8 @@ async function loadCards(): Promise<PositionCard[]> {
       cost_usd: t?.cost_usd,
       strategy_text: t ? t.strategy_label || (t.strategy ? strategyLabel(t.strategy) : undefined) : undefined,
       partial: !!t?.partial,
+      meteora: met.get(p.position) ?? null,
+      ...mc,
       entry_price: t?.entry_price,
       pair: await pairName(p.pool, t?.pool_name || undefined),
     } as PositionCard);
@@ -153,7 +185,8 @@ export const PAGE_SIZE = 8;
 
 export function positionButtonLabel(p: PositionCard): string {
   const dot = p.in_range == null ? "⚪" : p.in_range ? "🟢" : "🔴";
-  const pnl = p.pnl_pct == null ? "" : ` ${p.pnl_pct >= 0 ? "+" : "−"}${Math.abs(p.pnl_pct).toFixed(p.pnl_pct !== 0 && Math.abs(p.pnl_pct) < 10 ? 1 : 0)}%`;
+  const pc = p.meteora?.pnlPct ?? p.pnl_pct;
+  const pnl = pc == null ? "" : ` ${pc >= 0 ? "+" : "−"}${Math.abs(pc).toFixed(pc !== 0 && Math.abs(pc) < 10 ? 1 : 0)}%`;
   const pair = (p.pair || "TOKEN/SOL").slice(0, 16);
   return `${dot} ${pair} ${p.total_value_usd == null ? "n/a" : `$${Math.round(p.total_value_usd)}`}${pnl}`;
 }

@@ -1,3 +1,4 @@
+import { getMintDecimals } from "./decimals.js";
 /**
  * Build DLMM transactions. Ephemeral position keypair partialSigns; wallet signs at execute time.
  */
@@ -103,16 +104,8 @@ export async function buildAddLiquidityTxs(input: {
   const amountY = new BN(Math.floor(input.amountSol * 1e9));
   let amountX = new BN(0);
   if (input.side === "two_sided" && input.amountTokenUi && input.amountTokenUi > 0) {
-    // assume 6 decimals fallback — refined via mint decimals when possible
-    let dec = 6;
-    try {
-      const mintX = pool.lbPair.tokenXMint;
-      const info = await conn.getParsedAccountInfo(mintX);
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      dec = (info.value?.data as any)?.parsed?.info?.decimals ?? 6;
-    } catch {
-      /* keep 6 */
-    }
+    const mintX = pool.lbPair.tokenXMint;
+    const dec = await getMintDecimals(mintX, (pool as { tokenX?: unknown }).tokenX);
     amountX = new BN(Math.floor(input.amountTokenUi * 10 ** dec));
   }
 

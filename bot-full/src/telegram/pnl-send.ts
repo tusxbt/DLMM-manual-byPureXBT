@@ -1,3 +1,4 @@
+import type { MeteoraPnl } from "../engine/meteora-pnl.js";
 /** Build + send PnL card photos. Never throws (image is best-effort, never blocks a close). */
 import { InputFile, type Context } from "grammy";
 import { log, redactSecrets } from "../logger.js";
@@ -18,6 +19,8 @@ export type PositionSnapshot = {
   max_price?: number | null;
   active_price?: number | null;
   entry_price?: number | null;
+  /** Meteora datapi PnL (preferred) */
+  meteora?: MeteoraPnl | null;
 };
 
 export function snapshotOf(p: Record<string, unknown>): PositionSnapshot {
@@ -35,6 +38,7 @@ export function snapshotOf(p: Record<string, unknown>): PositionSnapshot {
     max_price: n(p.max_price),
     active_price: n(p.active_price),
     entry_price: n(p.entry_price),
+    meteora: (p.meteora as MeteoraPnl | undefined) ?? null,
   };
 }
 
@@ -45,6 +49,25 @@ export function kstStamp(d = new Date()): string {
 }
 
 export function cardDataFromSnapshot(s: PositionSnapshot, closed: boolean, now = new Date()): PnlCardData {
+  const m = s.meteora;
+  if (m && m.pnlUsd != null) {
+    const exitM = closed
+      ? m.withdrawUsd == null ? null : m.withdrawUsd + (m.feesUsd ?? 0)
+      : m.balanceUsd == null ? null : m.balanceUsd + (m.unclaimedFeesUsd ?? 0);
+    return {
+      ...ownCard(s, closed, now),
+      depositUsd: m.depositUsd,
+      exitUsd: exitM,
+      feesUsd: m.feesUsd,
+      pnlUsd: m.pnlUsd,
+      pnlPct: m.pnlPct,
+      source: "Meteora",
+    };
+  }
+  return { ...ownCard(s, closed, now), source: "estimasi" };
+}
+
+function ownCard(s: PositionSnapshot, closed: boolean, now: Date): PnlCardData {
   const exitUsd = s.total_value_usd == null ? null : s.total_value_usd + (s.unclaimed_fees_usd ?? 0);
   const dep = s.cost_usd && s.cost_usd > 0 ? s.cost_usd : null;
   const pnlUsd = dep != null && exitUsd != null ? exitUsd - dep : null;

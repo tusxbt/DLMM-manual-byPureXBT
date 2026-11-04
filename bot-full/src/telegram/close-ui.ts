@@ -12,6 +12,8 @@ import { showPositionCards } from "./positions-view.js";
 import { buildPnlCardPng, type PositionSnapshot } from "./pnl-send.js";
 
 import { currentUser } from "../users/context.js";
+import { fetchClosedPnl } from "../engine/meteora-pnl.js";
+import { loadConfig } from "../config.js";
 const details = new Map<string, { short: string; full: string; at: number; uid?: string }>();
 
 function remember(short: string, full: string): string {
@@ -53,15 +55,23 @@ export function compactResult(o: CloseOutcome): string {
     return `❌ ${name} gagal · ${err}`;
   }
   const s = o.snapshot;
-  const exitUsd = s?.total_value_usd == null ? null : s.total_value_usd + (s.unclaimed_fees_usd ?? 0);
+  const m = s?.meteora && s.meteora.pnlUsd != null ? s.meteora : null;
   let pnl = "";
-  if (s?.cost_usd && s.cost_usd > 0 && exitUsd != null) {
-    const d = exitUsd - s.cost_usd;
-    pnl = ` · ${d >= 0 ? "+" : "-"}$${Math.abs(d).toFixed(2)} (${d >= 0 ? "+" : ""}${((d / s.cost_usd) * 100).toFixed(1)}%)`;
+  if (m) {
+    pnl = ` · ${m.pnlUsd! >= 0 ? "+" : "-"}$${Math.abs(m.pnlUsd!).toFixed(2)}${m.pnlPct != null ? ` (${m.pnlPct >= 0 ? "+" : ""}${m.pnlPct.toFixed(2)}%)` : ""}`;
+  } else {
+    const exitUsd = s?.total_value_usd == null ? null : s.total_value_usd + (s.unclaimed_fees_usd ?? 0);
+    if (s?.cost_usd && s.cost_usd > 0 && exitUsd != null) {
+      const d = exitUsd - s.cost_usd;
+      pnl = ` · ${d >= 0 ? "+" : "-"}$${Math.abs(d).toFixed(2)} (${d >= 0 ? "+" : ""}${((d / s.cost_usd) * 100).toFixed(1)}%) estimasi`;
+    } else pnl = " · PnL n/a";
   }
   const real = o.signatures.filter((x) => !x.startsWith("DRY_RUN"));
   const dry = o.signatures.length > 0 && real.length === 0;
-  const recv = o.solReceived != null && o.solReceived > 0 ? `≈ ${o.solReceived.toFixed(4)} SOL diterima · ` : "";
+  const recv =
+    o.solReceived != null
+      ? `Realized setelah swap: ${o.solReceived >= 0 ? "+" : "−"}${Math.abs(o.solReceived).toFixed(4)} SOL (termasuk refund rent, minus fee tx & slippage) · `
+      : "";
   const last = real.at(-1);
   return [
     `✅ ${name}${pnl}${dry ? " · 🧪 DRY_RUN" : ""}`,
@@ -94,6 +104,17 @@ export async function setStatus(ctx: Context, msgId: number | undefined, text: s
 
 /** Final: photo (if card renders) replacing the status message, else edit status text. */
 export async function finishClose(ctx: Context, msgId: number, o: CloseOutcome): Promise<void> {
+  // Meteora PnL (same as UI); indexer may lag a few seconds after close
+  if (o.success && o.snapshot && !o.signatures.every((x) => x.startsWith("DRY_RUN"))) {
+    try {
+      await setStatus(ctx, msgId, `⏳ Ambil PnL Meteora…`);
+      const wallet = loadConfig({ requireTelegram: false, skipWallet: true }).walletPublicKey.toBase58();
+      const m = await fetchClosedPnl(o.snapshot.pool, wallet, o.snapshot.position);
+      if (m) o.snapshot = { ...o.snapshot, meteora: m };
+    } catch {
+      /* fallback: estimasi */
+    }
+  }
   const short = compactResult(o);
   const id = remember(short, `${short}\n\n${fullDetail(o)}`);
   if (o.success && o.snapshot && !o.signatures.every((x) => x.startsWith("DRY_RUN"))) {

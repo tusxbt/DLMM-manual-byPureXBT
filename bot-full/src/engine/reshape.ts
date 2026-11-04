@@ -1,3 +1,4 @@
+import { getMintDecimals } from "./decimals.js";
 /**
  * /reshape — claim fees, withdraw token-bearing bins, re-add as new BidAsk ask-side position.
  */
@@ -75,14 +76,7 @@ async function withBlockhash(tx: Transaction, feePayer: PublicKey): Promise<Tran
 }
 
 async function mintDecimals(mint: PublicKey): Promise<number> {
-  const conn = getConnection();
-  try {
-    const info = await conn.getParsedAccountInfo(mint);
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    return (info.value?.data as any)?.parsed?.info?.decimals ?? (mint.toBase58() === SOL_MINT ? 9 : 6);
-  } catch {
-    return mint.toBase58() === SOL_MINT ? 9 : 6;
-  }
+  return getMintDecimals(mint);
 }
 
 /** SPL token balance (atomic) for owner; 0 if ATA missing. Native SOL not used for token side. */

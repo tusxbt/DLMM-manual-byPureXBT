@@ -10,7 +10,7 @@ test("compact close result is 2-3 lines with single tx link", () => {
   const lines = t.split("\n");
   assert.ok(lines.length <= 3);
   assert.match(lines[0], /✅ Exit AMD\/SOL · \+\$1\.23 \(\+2\.4%\)/);
-  assert.match(lines[1], /0\.5120 SOL diterima · ⏱ 3\.0s/);
+  assert.match(lines[1], /Realized setelah swap: \+0\.5120 SOL \(termasuk refund rent, minus fee tx & slippage\) · ⏱ 3\.0s/);
   assert.match(lines[2], /solscan\.io\/tx\/c3/);
   assert.equal((t.match(/solscan/g) || []).length, 1);
 });

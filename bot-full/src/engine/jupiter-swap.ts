@@ -1,3 +1,4 @@
+import { getMintDecimals } from "./decimals.js";
 /**
  * Jupiter swap — quote + build versioned tx; wallet signs at execute time.
  */
@@ -103,9 +104,6 @@ export const buildUnsignedSwapTx = buildSwapTx;
 export async function uiAmountToAtomic(mint: string, uiAmount: number): Promise<string> {
   mint = normalizeMint(mint);
   if (mint === SOL_MINT) return String(Math.floor(uiAmount * 1e9));
-  const conn = getConnection();
-  const info = await conn.getParsedAccountInfo(new PublicKey(mint));
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const dec = (info.value?.data as any)?.parsed?.info?.decimals ?? 6;
+  const dec = await getMintDecimals(mint);
   return String(Math.floor(uiAmount * 10 ** dec));
 }

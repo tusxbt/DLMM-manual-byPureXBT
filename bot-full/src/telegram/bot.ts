@@ -614,7 +614,7 @@ async function showPositions(ctx: Context): Promise<void> {
     }
     const lines = s.data.posList.map((p, i) => {
       const ir = p.in_range == null ? "?" : p.in_range ? "🟢 in" : "🔴 OUT";
-      return `${i + 1}. ${p.pool_name || shortAddr(String(p.pool))}\n   Nilai ${fmtUsd(Number(p.total_value_usd))} | PnL ${fmtUsd(Number(p.pnl_usd))} (${fmtNum(Number(p.pnl_pct), 2)}%)\n   Fees ${fmtUsd(Number(p.unclaimed_fees_usd))} | ${ir}`;
+      return `${i + 1}. ${p.pool_name || shortAddr(String(p.pool))}\n   Nilai ${p.total_value_usd == null ? "n/a" : fmtUsd(Number(p.total_value_usd))} | PnL ${p.pnl_usd == null ? "n/a" : `${fmtUsd(Number(p.pnl_usd))} (${fmtNum(Number(p.pnl_pct), 2)}%) estimasi`}\n   Fees ${p.unclaimed_fees_usd == null ? "n/a" : fmtUsd(Number(p.unclaimed_fees_usd))} | ${ir}`;
     });
     const kb = new InlineKeyboard();
     s.data.posList.forEach((_, i) => {

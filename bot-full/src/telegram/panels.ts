@@ -1,3 +1,4 @@
+import { getSupplyUi, marketCap, mcRangeText } from "../engine/supply.js";
 import { presentConfirm } from "./confirm-ui.js";
 import { InlineKeyboard, Keyboard, type Bot, type Context } from "grammy";
 import { loadConfig, CONFIRM_TTL_MS, SOL_MINT } from "../config.js";
@@ -230,6 +231,11 @@ async function deployPanel(ctx: Context): Promise<void> {
         ? `Harga: ${fmtNum(c.minPrice, 10)} → ${fmtNum(c.maxPrice, 10)} SOL` +
           (p.solUsd ? ` (${fmtUsd(c.minPrice * p.solUsd)} → ${fmtUsd(c.maxPrice * p.solUsd)})` : "")
         : "",
+      await (async () => {
+        const mint = tokenMint(p);
+        const sup = mint ? await getSupplyUi(mint) : null;
+        return `🏷 ${mcRangeText(marketCap(c.minPrice, p.solUsd, sup), marketCap(c.maxPrice, p.solUsd, sup), marketCap(p.activePrice, p.solUsd, sup))}`;
+      })(),
       c.clamped ? `⚠️ Custom harga dipotong ke ${MAX_BINS_PER_POSITION} bins.` : "",
       built.quote
         ? `🧱 Posisi lebar ${c.total + 1} bins · ${built.quote.txCount} tx\n      rent posisi ≈${fmtNum(built.quote.positionRentSol, 4)} SOL (kembali saat close)\n      bin array baru ${Number.isFinite(built.quote.binArraysCount) ? built.quote.binArraysCount : "?"} ≈${fmtNum(built.quote.binArrayRentSol, 4)} SOL (tidak kembali)`

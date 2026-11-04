@@ -1,3 +1,4 @@
+import { getMintDecimals } from "./decimals.js";
 /**
  * /zapout — claim fees, remove 100% + close, swap all non-SOL token delta → SOL via Jupiter.
  * Exempt from hard MAX_SWAP_USD block (exit path); warns if estimated swap USD > cap.
@@ -56,13 +57,7 @@ async function withBlockhash(tx: Transaction, feePayer: PublicKey): Promise<Tran
 }
 
 async function mintDecimals(mint: PublicKey): Promise<number> {
-  try {
-    const info = await getConnection().getParsedAccountInfo(mint);
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    return (info.value?.data as any)?.parsed?.info?.decimals ?? (mint.toBase58() === SOL_MINT ? 9 : 6);
-  } catch {
-    return mint.toBase58() === SOL_MINT ? 9 : 6;
-  }
+  return getMintDecimals(mint);
 }
 
 export async function analyzeZapout(input: {

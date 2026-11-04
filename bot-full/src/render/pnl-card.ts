@@ -39,6 +39,8 @@ export type PnlCardData = {
   exitTime?: number;
   candles?: Candle[];
   timeLabel: string; // e.g. "04 Nov 2026 23:25 KST"
+  /** "Meteora" (datapi, same as UI) or "estimasi" (own calc) */
+  source?: string;
 };
 
 const BG = "#0f1420";
@@ -277,11 +279,16 @@ export function renderPnlCard(d: PnlCardData): Buffer {
     font(ctx, 32, true);
     ctx.fillText(`${d.pnlPct >= 0 ? "+" : ""}${d.pnlPct.toFixed(2)}%`, 40, 220);
   }
+  if (d.source) {
+    font(ctx, 16);
+    ctx.fillStyle = MUTED;
+    ctx.fillText(d.source === "Meteora" ? "PnL: Meteora" : "PnL: estimasi", 40 + (d.pnlPct != null ? 190 : 0), 220);
+  }
 
   // stats column
   const stats: Array<[string, string]> = [
     ["Deposit", usd(d.depositUsd)],
-    [d.closed ? "Exit (incl. fee)" : "Value + fee", usd(d.exitUsd)],
+    [d.closed ? (d.source === "Meteora" ? "Withdraw + fee" : "Exit (incl. fee)") : "Value + fee", usd(d.exitUsd)],
     ["Fee earned", usd(d.feesUsd)],
     ["Durasi", d.duration ?? "n/a"],
     ["Range", d.minPrice && d.maxPrice ? `${fmtPx(d.minPrice)} – ${fmtPx(d.maxPrice)}` : "n/a"],

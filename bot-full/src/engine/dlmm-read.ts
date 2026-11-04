@@ -1,3 +1,4 @@
+import { getMintDecimals } from "./decimals.js";
 import { PublicKey } from "@solana/web3.js";
 import { getConnection } from "./connection.js";
 import { getDLMM } from "./dlmmSdk.js";
@@ -138,16 +139,17 @@ export async function listLivePositions(costByPosition: Record<string, number> =
           positionBinData?: unknown[];
         };
       }>;
-      tokenX?: { publicKey?: PublicKey; mint?: PublicKey; decimal?: number };
-      tokenY?: { publicKey?: PublicKey; mint?: PublicKey; decimal?: number };
+      tokenX?: { publicKey?: PublicKey; mint?: unknown };
+      tokenY?: { publicKey?: PublicKey; mint?: unknown };
       lbPair?: { activeId?: number; binStep?: number };
     };
-    const mintX = (g.tokenX?.publicKey || g.tokenX?.mint)?.toString?.() || "";
-    const mintY = (g.tokenY?.publicKey || g.tokenY?.mint)?.toString?.() || "";
+    const mintX = g.tokenX?.publicKey?.toString?.() || "";
+    const mintY = g.tokenY?.publicKey?.toString?.() || "";
     if (mintX) mints.add(mintX);
     if (mintY) mints.add(mintY);
-    const decX = Number(g.tokenX?.decimal ?? 9);
-    const decY = Number(g.tokenY?.decimal ?? 9);
+    // TokenReserve has no `.decimal` — real value is mint.decimals (fallback: on-chain mint)
+    const decX = mintX ? await getMintDecimals(mintX, g.tokenX) : 9;
+    const decY = mintY ? await getMintDecimals(mintY, g.tokenY) : 9;
     const activeId = g.lbPair?.activeId;
     const binStep = g.lbPair?.binStep;
 
