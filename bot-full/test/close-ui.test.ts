@@ -8,14 +8,17 @@ test("compact close result is 2-3 lines with single tx link", () => {
     snapshot: { pool: "p", position: "q", total_value_usd: 52, unclaimed_fees_usd: 0.23, cost_usd: 51 },
   });
   const lines = t.split("\n");
-  assert.ok(lines.length <= 3);
-  assert.match(lines[0], /✅ Exit AMD\/SOL · \+\$1\.23 \(\+2\.4%\)/);
-  assert.match(lines[1], /Realized setelah swap: \+0\.5120 SOL \(termasuk refund rent, minus fee tx & slippage\) · ⏱ 3\.0s/);
-  assert.match(lines[2], /solscan\.io\/tx\/c3/);
+  assert.ok(lines.length <= 7);
+  assert.match(lines[0], /✅ \*\*Exit AMD\/SOL\*\*/);
+  assert.match(t, /PnL: 🟢 \+\$1\.23 \(\+2\.4\d%\)/);
+  assert.match(t, /Realized: \+0\.5120 SOL/);
+  assert.match(t, /Waktu: 3\.0s/);
+  assert.match(lines.at(-1)!, /solscan\.io\/tx\/c3/);
+  for (const l of lines) assert.ok(l.replace(/\[(.*?)\]\(.*?\)/g, "$1").length <= 34, l);
   assert.equal((t.match(/solscan/g) || []).length, 1);
 });
 
 test("error is one line", () => {
   const t = compactResult({ kind: "zapout", pair: "X/SOL", success: false, signatures: [], ms: 1, error: "boom\nstack" });
-  assert.equal(t, "❌ Zapout X/SOL gagal · boom");
+  assert.equal(t, "❌ **Zapout X/SOL gagal**\nboom");
 });

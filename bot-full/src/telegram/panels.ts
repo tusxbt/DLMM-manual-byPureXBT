@@ -1,4 +1,6 @@
-import { getSupplyUi, marketCap, mcRangeText } from "../engine/supply.js";
+import { screen, section, kv } from "./layout.js";
+import { getSupplyUi, marketCap } from "../engine/supply.js";
+import { renderAddPreview } from "./preview.js";
 import { presentConfirm } from "./confirm-ui.js";
 import { InlineKeyboard, Keyboard, type Bot, type Context } from "grammy";
 import { loadConfig, CONFIRM_TTL_MS, SOL_MINT } from "../config.js";
@@ -219,36 +221,33 @@ async function deployPanel(ctx: Context): Promise<void> {
       poolName: String(p.pool?.name || ""),
       mixPct: loadSettings().mixBidAskPct,
     });
-    const summary = [
-      "👀 Preview Add LP",
-      `Pool: ${p.pool?.name}`,
-      `Sisi: ${modeLabel(p.side)}`,
-      `Bentuk: ${strat.label}`,
-      `Amount: ${amountText(p)}`,
-      `Range: ${rangeLabel(p.range)} → ${c.total} bins (${c.below} bawah / ${c.above} atas)`,
-      `      −${fmtNum(c.downPct, 2)}% → +${fmtNum(c.upPct, 2)}%`,
-      c.minPrice != null && c.maxPrice != null
-        ? `Harga: ${fmtNum(c.minPrice, 10)} → ${fmtNum(c.maxPrice, 10)} SOL` +
-          (p.solUsd ? ` (${fmtUsd(c.minPrice * p.solUsd)} → ${fmtUsd(c.maxPrice * p.solUsd)})` : "")
-        : "",
-      await (async () => {
-        const mint = tokenMint(p);
-        const sup = mint ? await getSupplyUi(mint) : null;
-        return `🏷 ${mcRangeText(marketCap(c.minPrice, p.solUsd, sup), marketCap(c.maxPrice, p.solUsd, sup), marketCap(p.activePrice, p.solUsd, sup))}`;
-      })(),
-      c.clamped ? `⚠️ Custom harga dipotong ke ${MAX_BINS_PER_POSITION} bins.` : "",
-      built.quote
-        ? `🧱 Posisi lebar ${c.total + 1} bins · ${built.quote.txCount} tx\n      rent posisi ≈${fmtNum(built.quote.positionRentSol, 4)} SOL (kembali saat close)\n      bin array baru ${Number.isFinite(built.quote.binArraysCount) ? built.quote.binArraysCount : "?"} ≈${fmtNum(built.quote.binArrayRentSol, 4)} SOL (tidak kembali)`
-        : "",
-      built.mix ? `🧪 Mix: BidAsk ${built.mix.pct}% (${built.mix.primaryText}) + Spot ${100 - built.mix.pct}% (${built.mix.spotText})` : "",
-      `Slippage: ${getLiqSlippagePct()}%`,
-      `Perkiraan cost: ${fmtUsd(costUsd)} (cap ${fmtUsd(cfg.maxPositionUsd)})`,
-      `📍 Posisi baru \`${built.position}\``,
-      cfg.dryRun ? "Mode: DRY_RUN (simulasi)" : "Mode: LIVE — akan ditandatangani & dikirim",
-      `Konfirmasi dalam ${CONFIRM_TTL_MS / 1000}s.`,
-    ]
-      .filter(Boolean)
-      .join("\n");
+    const sup = tokenMint(p) ? await getSupplyUi(tokenMint(p)!) : null;
+    const summary = renderAddPreview({
+      pool: String(p.pool?.name || ""),
+      side: modeLabel(p.side),
+      strategy: built.mix ? `Mix ${built.mix.pct}/${100 - built.mix.pct}` : strat.label,
+      amount: amountText(p),
+      mix: built.mix ?? null,
+      bins: c.total,
+      below: c.below,
+      above: c.above,
+      downPct: c.downPct,
+      upPct: c.upPct,
+      minPrice: c.minPrice,
+      maxPrice: c.maxPrice,
+      solUsd: p.solUsd,
+      mcMin: marketCap(c.minPrice, p.solUsd, sup),
+      mcMax: marketCap(c.maxPrice, p.solUsd, sup),
+      mcNow: marketCap(p.activePrice, p.solUsd, sup),
+      clamped: c.clamped,
+      costUsd,
+      capUsd: cfg.maxPositionUsd,
+      slippagePct: getLiqSlippagePct(),
+      wide: built.quote ?? null,
+      position: built.position,
+      dryRun: cfg.dryRun,
+      ttlSec: CONFIRM_TTL_MS / 1000,
+    });
     const req = createConfirm({
       purpose: "add",
       summary,
@@ -494,29 +493,33 @@ export function replyKbAction(text: string): keyof typeof REPLY_KB_LABELS | null
 
 // ── Settings panel ──────────────────────────────────────────────
 
-function settingsText(note?: string): string {
+export function settingsText(note?: string): string {
   const st = loadSettings();
   const cfg = loadConfig({ requireTelegram: false, skipWallet: true });
-  return [
+  return screen(
     "⚙️ Settings",
-    st.autoConfirm
-      ? `${AUTO_BADGE} — 🚪 Exit & ⚡ → SOL langsung dieksekusi; aksi lain tetap Confirm`
-      : "🛡 Auto confirm close OFF — semua aksi butuh Confirm (60s)",
-    "",
-    `🎚 SWAP slippage: ${getSwapSlippagePct()}% (Jupiter bps = ×100)`,
-    `🎚 LIQ slippage: ${getLiqSlippagePct()}% (Meteora %)`,
-    `💵 Amount presets: ${st.amountPresets.join(", ")} SOL`,
-    `🚀 Priority fee: ${st.priorityFeeMicroLamports > 0 ? `${st.priorityFeeMicroLamports} µlamports/CU` : "auto (recent fees, 50k–2M µlamports/CU)"} · Jupiter maks ${st.jupPriorityMaxLamports} lamports`,
-    `📏 Bin presets: Narrow ${st.binPresets.narrow} / Medium ${st.binPresets.medium} / Wide ${st.binPresets.wide} bins (maks 69)`,
-    "",
-    "🔒 Dari .env (ubah manual di server):",
-    `DRY_RUN: ${cfg.dryRun} | MAX_POSITION_USD: ${cfg.maxPositionUsd} | MAX_SWAP_USD: ${cfg.maxSwapUsd}`,
-    `Strategi: ${listStrategies().map((x) => x.label).join(", ")}`,
-    "Zapout dikecualikan dari penolakan MAX_SWAP_USD (hanya peringatan).",
-    note ? `\nℹ️ ${note}` : null,
-  ]
-    .filter((x) => x !== null)
-    .join("\n");
+    note ? `ℹ️ ${note}` : null,
+    section("🛡 Konfirmasi", [
+      kv("Auto close", st.autoConfirm ? "⚡ ON" : "OFF"),
+      st.autoConfirm ? "Exit & → SOL tanpa Confirm" : "Semua aksi pakai Confirm",
+    ]),
+    section("🎚 Slippage", [kv("Swap", `${getSwapSlippagePct()}%`), kv("Liquidity", `${getLiqSlippagePct()}%`)]),
+    section("🚀 Priority fee", [
+      kv("DLMM", st.priorityFeeMicroLamports > 0 ? `${st.priorityFeeMicroLamports} µL/CU` : "auto"),
+      kv("Jup maks", `${st.jupPriorityMaxLamports} lamports`),
+    ]),
+    section("📏 Range & amount", [
+      kv("Bins", `${st.binPresets.narrow} / ${st.binPresets.medium} / ${st.binPresets.wide}`),
+      kv("Range %", st.rangePresets.map((r) => pctLabel(r)).join(", ") || "-"),
+      kv("Amount", `${st.amountPresets.join(" / ")} SOL`),
+      kv("Mix", `BidAsk ${st.mixBidAskPct} / Spot ${100 - st.mixBidAskPct}`),
+    ]),
+    section("🔒 Dari .env", [
+      kv("Mode", cfg.dryRun ? "🧪 DRY_RUN" : "⚠️ LIVE"),
+      kv("Cap posisi", fmtUsd(cfg.maxPositionUsd)),
+      kv("Cap swap", fmtUsd(cfg.maxSwapUsd)),
+    ]),
+  );
 }
 
 function settingsKb(): InlineKeyboard {

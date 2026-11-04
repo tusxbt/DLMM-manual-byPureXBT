@@ -12,6 +12,7 @@ import { showPositionCards } from "./positions-view.js";
 import { buildPnlCardPng, type PositionSnapshot } from "./pnl-send.js";
 
 import { currentUser } from "../users/context.js";
+import { kv, pnlLine } from "./layout.js";
 import { fetchClosedPnl } from "../engine/meteora-pnl.js";
 import { loadConfig } from "../config.js";
 const details = new Map<string, { short: string; full: string; at: number; uid?: string }>();
@@ -52,31 +53,33 @@ export function compactResult(o: CloseOutcome): string {
   const name = o.kind === "zapout" ? `Zapout ${o.pair}` : `Exit ${o.pair}`;
   if (!o.success) {
     const err = redactSecrets(o.error || o.message || "gagal").split("\n")[0].slice(0, 90);
-    return `❌ ${name} gagal · ${err}`;
+    return `❌ **${name} gagal**\n${err}`;
   }
   const s = o.snapshot;
   const m = s?.meteora && s.meteora.pnlUsd != null ? s.meteora : null;
-  let pnl = "";
+  let pnl: string;
+  let src = "";
   if (m) {
-    pnl = ` · ${m.pnlUsd! >= 0 ? "+" : "-"}$${Math.abs(m.pnlUsd!).toFixed(2)}${m.pnlPct != null ? ` (${m.pnlPct >= 0 ? "+" : ""}${m.pnlPct.toFixed(2)}%)` : ""}`;
+    pnl = pnlLine(m.pnlUsd, m.pnlPct);
   } else {
     const exitUsd = s?.total_value_usd == null ? null : s.total_value_usd + (s.unclaimed_fees_usd ?? 0);
     if (s?.cost_usd && s.cost_usd > 0 && exitUsd != null) {
       const d = exitUsd - s.cost_usd;
-      pnl = ` · ${d >= 0 ? "+" : "-"}$${Math.abs(d).toFixed(2)} (${d >= 0 ? "+" : ""}${((d / s.cost_usd) * 100).toFixed(1)}%) estimasi`;
-    } else pnl = " · PnL n/a";
+      pnl = pnlLine(d, (d / s.cost_usd) * 100);
+      src = "estimasi";
+    } else pnl = "n/a";
   }
   const real = o.signatures.filter((x) => !x.startsWith("DRY_RUN"));
   const dry = o.signatures.length > 0 && real.length === 0;
-  const recv =
-    o.solReceived != null
-      ? `Realized setelah swap: ${o.solReceived >= 0 ? "+" : "−"}${Math.abs(o.solReceived).toFixed(4)} SOL (termasuk refund rent, minus fee tx & slippage) · `
-      : "";
   const last = real.at(-1);
   return [
-    `✅ ${name}${pnl}${dry ? " · 🧪 DRY_RUN" : ""}`,
-    `${recv}⏱ ${(o.ms / 1000).toFixed(1)}s`,
-    last ? `[🧾 Tx](https://solscan.io/tx/${last})${real.length > 1 ? ` (+${real.length - 1})` : ""}` : null,
+    `✅ **${name}**${dry ? " 🧪" : ""}`,
+    kv("PnL", pnl),
+    src ? kv("Sumber", src) : null,
+    o.solReceived != null ? kv("Realized", `${o.solReceived >= 0 ? "+" : "−"}${Math.abs(o.solReceived).toFixed(4)} SOL`) : null,
+    o.solReceived != null ? "(+rent, −fee tx & slippage)" : null,
+    kv("Waktu", `${(o.ms / 1000).toFixed(1)}s`),
+    last ? `[🧾 Tx Solscan](https://solscan.io/tx/${last})${real.length > 1 ? ` +${real.length - 1}` : ""}` : null,
   ]
     .filter(Boolean)
     .join("\n");

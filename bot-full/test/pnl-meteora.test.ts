@@ -35,7 +35,8 @@ test("Meteora PnL parse — Donkey case +$0.91 / +1.88%", () => {
   assert.ok(Math.abs((card.exitUsd ?? 0) - 49.47) < 1e-9);
   const t = compactResult({ kind: "zapout", pair: "Donkey/SOL", success: true, signatures: ["s1"], ms: 2000, solReceived: 0.5509, snapshot: { pool: "P", position: "DonkeyPos111", total_value_usd: null, unclaimed_fees_usd: null, meteora: m } });
   assert.match(t, /\+\$0\.91 \(\+1\.88%\)/);
-  assert.match(t, /Realized setelah swap: \+0\.5509 SOL/);
+  assert.match(t, /Realized: \+0\.5509 SOL/);
+  assert.match(t, /\+rent, −fee tx & slippage/);
 });
 
 test("fallback is labelled estimasi; unknown price → n/a", () => {
@@ -45,7 +46,7 @@ test("fallback is labelled estimasi; unknown price → n/a", () => {
   const na = cardDataFromSnapshot({ pool: "P", position: "x", total_value_usd: null, unclaimed_fees_usd: null, cost_usd: 48 }, true);
   assert.equal(na.pnlUsd, null);
   const t = compactResult({ kind: "remove", pair: "X/SOL", success: true, signatures: ["s"], ms: 1000, snapshot: { pool: "P", position: "x", total_value_usd: null, unclaimed_fees_usd: null, cost_usd: 10 } });
-  assert.match(t, /PnL n\/a/);
+  assert.match(t, /PnL: n\/a/);
 });
 
 test("open position: unrealized + unclaimed fees", () => {

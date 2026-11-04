@@ -1,3 +1,4 @@
+import { screen, section, kv } from "./layout.js";
 /** 👛 Wallet (per user) + /admin (owner only). No key/seed is ever accepted or shown in chat. */
 import { InlineKeyboard, type Bot, type Context } from "grammy";
 import { PublicKey, SystemProgram, Transaction, LAMPORTS_PER_SOL } from "@solana/web3.js";
@@ -50,18 +51,7 @@ export async function showWallet(ctx: Context): Promise<void> {
   const kb = new InlineKeyboard().text("🔄 Refresh", "w:show").text("📤 Withdraw SOL", "w:wd");
   if (isOwner()) kb.row().text("🛡 Admin", "adm:home");
   await ctx.reply(
-    [
-      `👛 **Wallet**${isOwner() ? " · owner" : ""}`,
-      `\`${b.wallet}\``,
-      "",
-      `◎ SOL    ${fmtNum(b.sol)}  ·  ${u(b.sol_usd)}`,
-      `💲 USDC  ${fmtNum(b.usdc)}  ·  ${fmtUsd(b.usdc_usd)}`,
-      `Σ Total  ${solUsd ? fmtUsd(b.total_usd) : "n/a"}`,
-      "",
-      `${cfg.dryRun ? "🧪 DRY_RUN" : "⚠️ LIVE"}  ·  cap posisi ${fmtUsd(cfg.maxPositionUsd)}  ·  swap ${fmtUsd(cfg.maxSwapUsd)}`,
-      `[🔗 Solscan](https://solscan.io/account/${b.wallet})`,
-      b.error ? `⚠️ ${b.error}` : null,
-    ].filter((x) => x !== null).join("\n"),
+    walletText({ wallet: b.wallet, sol: b.sol, solUsd: solUsd ? b.sol_usd : null, usdc: b.usdc, totalUsd: solUsd ? b.total_usd : null, owner: isOwner(), dryRun: cfg.dryRun, capPos: cfg.maxPositionUsd, capSwap: cfg.maxSwapUsd, error: b.error }),
     { reply_markup: kb },
   );
 }
@@ -76,6 +66,23 @@ export const ONBOARD_TEXT = [
   "⚠️ Jangan pernah kirim private key / seed phrase di chat. Bot tidak akan memintanya.",
 ].join("\n");
 export const onboardKb = () => new InlineKeyboard().text("🆕 Buat wallet", "w:create");
+
+export function walletText(w: {
+  wallet: string; sol: number; solUsd: number | null; usdc: number; totalUsd: number | null;
+  owner: boolean; dryRun: boolean; capPos: number; capSwap: number; error?: string;
+}): string {
+  return screen(
+    `👛 Wallet${w.owner ? " · owner" : ""}`,
+    section(null, [`\`${w.wallet}\``, `[Solscan](https://solscan.io/account/${w.wallet})`]),
+    section("💰 Saldo", [
+      kv("SOL", `${fmtNum(w.sol)}${w.solUsd != null ? ` (${fmtUsd(w.solUsd)})` : ""}`),
+      kv("USDC", fmtNum(w.usdc)),
+      kv("Total", w.totalUsd == null ? "n/a" : fmtUsd(w.totalUsd)),
+    ]),
+    section("🔒 Batas", [kv("Mode", w.dryRun ? "🧪 DRY_RUN" : "⚠️ LIVE"), kv("Cap posisi", fmtUsd(w.capPos)), kv("Cap swap", fmtUsd(w.capSwap))]),
+    w.error ? `⚠️ ${w.error}` : null,
+  );
+}
 
 // ── withdraw ──
 export async function buildWithdrawTx(from: PublicKey, to: PublicKey, lamports: number): Promise<PendingTxItem> {
@@ -121,17 +128,17 @@ async function askWithdraw(ctx: Context): Promise<void> {
 
 // ── admin ──
 export function adminText(): string {
-  const rows = listUsers().map((u, i) => {
-    const pk = walletPubkeyOf(u.id);
-    return `${i + 1}. \`${u.id}\` · ${pk ? `\`${pk}\`` : "belum ada wallet"}${hasImportFile(u.id) ? " · 📥 file import siap" : ""}`;
-  });
-  return [
-    "🛡 **Admin**",
-    `Owner: \`${ownerId()}\``,
-    encryptionKey() ? "🔐 WALLET_ENCRYPTION_KEY ✅" : "🔐 WALLET_ENCRYPTION_KEY ❌ belum diset",
-    "",
-    rows.length ? rows.join("\n") : "Belum ada user tambahan.",
-  ].join("\n");
+  const users = listUsers();
+  return screen(
+    "🛡 Admin",
+    section(null, [kv("Owner", `\`${ownerId()}\``), kv("Enkripsi", encryptionKey() ? "✅ key diset" : "❌ belum diset")]),
+    section(`👥 User (${users.length})`, users.length
+      ? users.map((u) => {
+          const pk = walletPubkeyOf(u.id);
+          return [`\`${u.id}\``, pk ? `  👛 \`${pk}\`` : "  👛 belum ada", hasImportFile(u.id) ? "  📥 file import siap" : null].filter(Boolean).join("\n");
+        })
+      : ["Belum ada user tambahan."]),
+  );
 }
 
 function adminKb(): InlineKeyboard {

@@ -31,15 +31,17 @@ test("card: PnL n/a when cost unknown; real when known", () => {
     min_price: 0.00000116, max_price: 0.00000425, active_price: 0.00000414,
   };
   const t = renderPositionCard(base as never, new Date("2026-11-04T04:25:48Z"));
-  assert.match(t, /\*\*BONK\/SOL\*\* · .* \[DLMM\]/);
-  assert.match(t, /PnL n\/a/);
-  assert.match(t, /0\.0₅116–0\.0₅425 \(now 0\.0₅414\)/);
-  assert.match(t, /🟢 In-range/);
-  assert.match(t, /updated 13:25:48 \(KST\)/);
+  assert.match(t, /\*\*BONK\/SOL · DLMM\*\*/);
+  assert.match(t, /PnL: n\/a/);
+  assert.match(t, /Min: 0\.0₅116/);
+  assert.match(t, /Max: 0\.0₅425/);
+  assert.match(t, /Now: 0\.0₅414/);
+  assert.match(t, /🟢 In range/);
+  assert.match(t, /Update: 13:25:48 KST/);
   assert.match(t, /app\.meteora\.ag\/dlmm\/PoolX/);
   const t2 = renderPositionCard({ ...base, pnl_usd: 7.21, pnl_pct: 0.8, in_range: false } as never);
-  assert.match(t2, /📈 \+\$7\.21 \(\+0\.80%\)/);
-  assert.match(t2, /🔴 Out-of-range/);
+  assert.match(t2, /🟢 \+\$7\.21 \(\+0\.80%\)/);
+  assert.match(t2, /🔴 Out of range/);
 });
 
 test("age + keyboard", () => {
@@ -64,9 +66,9 @@ test("button label: range dot, value, PnL omitted when n/a", () => {
 test("list: one message, totals, paginated by 8", () => {
   const cards = Array.from({ length: 19 }, (_, i) => mk(i));
   const r0 = renderPositionList(cards, 0, true);
-  assert.match(r0.text, /📊 19 posisi DLMM/);
+  assert.match(r0.text, /📊 Posisi DLMM \(19\)/);
   assert.match(r0.text, /Auto confirm close ON/);
-  assert.match(r0.text, /Hal 1\/3/);
+  assert.match(r0.text, /Hal: 1\/3/);
   const cb = (r: ReturnType<typeof renderPositionList>) => r.kb.inline_keyboard.flat().map((b) => (b as { callback_data: string }).callback_data);
   assert.equal(cb(r0).filter((c) => c.startsWith("pv:open:")).length, PAGE_SIZE);
   assert.ok(cb(r0).includes("pv:pg:1") && !cb(r0).includes("pv:pg:-1") && cb(r0).includes("pv:lref"));

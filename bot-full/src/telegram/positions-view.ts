@@ -1,3 +1,5 @@
+import { screen, section, kv, pnlLine } from "./layout.js";
+import { fmtCompactUsd } from "../engine/supply.js";
 import { getSupplyUi, marketCap, mcRangeText } from "../engine/supply.js";
 import { getSolUsd } from "../engine/prices.js";
 import { SOL_MINT, USDC_MINT } from "../config.js";
@@ -71,40 +73,39 @@ export function renderPositionCard(p: PositionCard, now = new Date()): string {
   const m = p.meteora && p.meteora.pnlUsd != null ? p.meteora : null;
   const pu = m ? m.pnlUsd : p.pnl_usd;
   const pp = m ? m.pnlPct : p.pnl_pct;
-  const pnl =
-    pu == null || pp == null
-      ? "📈 PnL n/a (harga/deposit tidak diketahui)"
-      : `${pu >= 0 ? "📈 +" : "📉 −"}$${Math.abs(pu).toFixed(2)} (${pp >= 0 ? "+" : "−"}${Math.abs(pp).toFixed(2)}%)${m ? " · Meteora" : " · estimasi"}`;
-  const lines = [
-    `**${pair}** · ${shortAddr(p.position)} [DLMM]`,
-    p.strategy_text || p.min_bin != null
-      ? `🧩 ${[p.strategy_text, p.min_bin != null && p.max_bin != null ? `${p.max_bin - p.min_bin + 1} bins` : null].filter(Boolean).join(" · ")}`
-      : null,
-    p.partial ? "⚠️ Deploy sebagian — buka ▶️ Retry / 🚪 Exit dari pesan gagal deploy" : null,
-    "",
-    `📊 Value: ${usdOrNa(p.total_value_usd)}`,
-    pnl,
-    `💵 Fee berjalan: ${usdOrNa(m?.unclaimedFeesUsd ?? p.unclaimed_fees_usd)}`,
-    m ? `🏦 Deposit ${usdOrNa(m.depositUsd)} · fee total ${usdOrNa(m.feesUsd)}` : null,
-    "",
-  ].filter((x): x is string => x !== null);
-  if (p.min_price != null && p.max_price != null) {
-    lines.push(`📐 ${fmtTinyPrice(p.min_price)}–${fmtTinyPrice(p.max_price)} (now ${fmtTinyPrice(p.active_price)}) ${pair}`);
-    lines.push(`🏷 ${mcRangeText(p.mc_min ?? null, p.mc_max ?? null, p.mc_now ?? null)}`);
-    const bar = p.active_price ? rangeBar(p.min_price, p.max_price, p.active_price) : "";
-    if (bar) lines.push(bar);
-  } else {
-    lines.push(`📐 bins ${p.min_bin ?? "?"}–${p.max_bin ?? "?"} (aktif ${p.active_id ?? "?"})`);
-  }
-  lines.push("");
-  lines.push(p.in_range == null ? "⚪ Range tidak diketahui" : p.in_range ? "🟢 In-range" : "🔴 Out-of-range");
-  lines.push("");
-  const age = fmtAge(p.opened_at, now.getTime());
-  lines.push(`🕐 ${age ?? "umur n/a"} · updated ${kstTime(now)} (KST)`);
-  lines.push(`📍 Pos  \`${p.position}\``);
-  lines.push(`🏊 Pool \`${p.pool}\``);
-  lines.push(`[🔗 Meteora](https://app.meteora.ag/dlmm/${p.pool}) · [Solscan](https://solscan.io/account/${p.position})`);
-  return lines.join("\n");
+  const status = p.in_range == null ? "⚪ Range ?" : p.in_range ? "🟢 In range" : "🔴 Out of range";
+  const bins = p.min_bin != null && p.max_bin != null ? p.max_bin - p.min_bin + 1 : null;
+  const bar = p.min_price != null && p.max_price != null && p.active_price ? rangeBar(p.min_price, p.max_price, p.active_price) : "";
+  return screen(
+    `${pair} · DLMM`,
+    section(null, [status, p.strategy_text ? kv("Strategi", p.strategy_text) : null, p.partial ? "⚠️ Deploy sebagian" : null]),
+    section("💰 PnL", [
+      kv("PnL", pnlLine(pu, pp)),
+      kv("Sumber", m ? "Meteora" : "estimasi"),
+      kv("Value", usdOrNa(p.total_value_usd)),
+      kv("Deposit", usdOrNa(m?.depositUsd ?? p.cost_usd ?? null)),
+      kv("Fee unclaim", usdOrNa(m?.unclaimedFeesUsd ?? p.unclaimed_fees_usd)),
+      m?.feesUsd != null ? kv("Fee total", usdOrNa(m.feesUsd)) : null,
+    ]),
+    section("📐 Range", [
+      p.min_price != null ? kv("Min", fmtTinyPrice(p.min_price)) : null,
+      p.max_price != null ? kv("Max", fmtTinyPrice(p.max_price)) : null,
+      p.active_price != null ? kv("Now", fmtTinyPrice(p.active_price)) : null,
+      bar || null,
+      bins != null ? kv("Bins", String(bins)) : null,
+      p.mc_min != null || p.mc_max != null ? kv("MC", `${fmtCompactUsd(p.mc_min)}–${fmtCompactUsd(p.mc_max)}`) : null,
+      p.mc_now != null ? kv("MC now", fmtCompactUsd(p.mc_now)) : null,
+    ]),
+    section("ℹ️ Info", [
+      kv("Umur", fmtAge(p.opened_at, now.getTime()) ?? "n/a"),
+      kv("Update", `${kstTime(now)} KST`),
+      "📍 Posisi",
+      `\`${p.position}\``,
+      "🏊 Pool",
+      `\`${p.pool}\``,
+      `[Meteora](https://app.meteora.ag/dlmm/${p.pool}) · [Solscan](https://solscan.io/account/${p.position})`,
+    ]),
+  );
 }
 
 export function positionKeyboard(i: number): InlineKeyboard {
@@ -198,20 +199,17 @@ export function renderPositionList(cards: PositionCard[], page: number, autoBadg
   const unpriced = cards.filter((c) => c.total_value_usd == null).length;
   const fees = cards.reduce((a, c) => a + (c.unclaimed_fees_usd || 0), 0);
   const inR = cards.filter((c) => c.in_range).length;
-  const text = [
-    `📊 ${cards.length} posisi DLMM`,
-    autoBadge ? `${AUTO_BADGE} — 🚪 Exit & ⚡ → SOL tanpa Confirm` : null,
-    "",
-    `💼 Total value: ${fmtUsd(total)}${unpriced ? ` (+${unpriced} posisi n/a)` : ""}`,
-    `💵 Fee berjalan: ${fmtUsd(fees)}`,
-    `🟢 ${inR} in-range · 🔴 ${cards.length - inR} out`,
-    pages > 1 ? `Hal ${pg + 1}/${pages}` : null,
-    "",
-    cards.length ? "Pilih posisi:" : "Tidak ada posisi DLMM terbuka.",
-    `🕐 updated ${kstTime()} (KST)`,
-  ]
-    .filter((x) => x !== null)
-    .join("\n");
+  const text = screen(
+    `📊 Posisi DLMM (${cards.length})`,
+    autoBadge ? "⚡ Auto confirm close ON" : null,
+    section(null, [
+      kv("Total", `${fmtUsd(total)}${unpriced ? ` (+${unpriced} n/a)` : ""}`),
+      kv("Fee", fmtUsd(fees)),
+      kv("In range", `${inR}/${cards.length}`),
+      pages > 1 ? kv("Hal", `${pg + 1}/${pages}`) : null,
+    ]),
+    section(null, [cards.length ? "Pilih posisi ⬇️" : "Tidak ada posisi terbuka.", `🕐 ${kstTime()} KST`]),
+  );
   const kb = new InlineKeyboard();
   cards.slice(pg * PAGE_SIZE, pg * PAGE_SIZE + PAGE_SIZE).forEach((c, j) => {
     kb.text(positionButtonLabel(c), `pv:open:${pg * PAGE_SIZE + j}`).row();
