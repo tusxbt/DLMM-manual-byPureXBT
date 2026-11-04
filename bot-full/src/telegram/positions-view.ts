@@ -10,8 +10,7 @@ import { presentConfirm, isAutoConfirm, AUTO_BADGE } from "./confirm-ui.js";
  * Positions view: one card message per DLMM position, edit-in-place refresh,
  * all actions routed through the existing Confirm/Cancel gate.
  */
-import { InlineKeyboard, InputFile, type Bot, type Context } from "grammy";
-import { renderBinsChart } from "../render/bins-chart.js";
+import { InlineKeyboard, type Bot, type Context } from "grammy";
 import { loadConfig, CONFIRM_TTL_MS } from "../config.js";
 import { fmtUsd, shortAddr, strategyLabel } from "../format.js";
 import { redactSecrets } from "../logger.js";
@@ -49,30 +48,6 @@ export function fmtTinyPrice(n: number | null | undefined): string {
  * Bin fill bar, downsampled to `width` buckets: █ ≥50% of bins in bucket hold liquidity, ▒ some, ░ none.
  * Active bin marked ▼ (inside) or ◀/▶ at the edge when out of range.
  */
-export function binBar(mask: string, minBin: number, activeId: number | null | undefined, width = 16): { bar: string; filled: number; total: number } {
-  const total = mask.length;
-  const filled = [...mask].filter((c) => c === "1").length;
-  const w = Math.max(1, Math.min(width, total));
-  const cells: string[] = [];
-  for (let k = 0; k < w; k++) {
-    const a = Math.floor((k * total) / w);
-    const b = Math.max(a + 1, Math.floor(((k + 1) * total) / w));
-    const seg = mask.slice(a, b);
-    const f = [...seg].filter((c) => c === "1").length / seg.length;
-    cells.push(f >= 0.5 ? "█" : f > 0 ? "▒" : "░");
-  }
-  let bar = cells.join("");
-  if (activeId != null) {
-    const i = activeId - minBin;
-    if (i < 0) bar = `◀${bar}`;
-    else if (i >= total) bar = `${bar}▶`;
-    else {
-      const k = Math.min(w - 1, Math.floor((i * w) / total));
-      bar = cells.slice(0, k).join("") + "▼" + cells.slice(k + 1).join("");
-    }
-  }
-  return { bar, filled, total };
-}
 
 export function rangeBar(min: number, max: number, now: number, width = 16): string {
   if (!(min > 0 && max > min && now > 0)) return "";
@@ -128,11 +103,6 @@ export function renderPositionCard(p: PositionCard, now = new Date()): string {
     if (p.active_price) out.push(rangeBar(p.min_price, p.max_price, p.active_price));
   } else {
     out.push(`📐 bins ${p.min_bin ?? "?"}–${p.max_bin ?? "?"} (aktif ${p.active_id ?? "?"})`);
-  }
-  if (p.bin_mask && p.min_bin != null) {
-    const b = binBar(p.bin_mask, p.min_bin, p.active_id);
-    out.push(`🧱 ${b.bar}`);
-    out.push(`Bins terisi: ${b.filled}/${b.total}`);
   }
   out.push("");
   out.push(p.in_range == null ? "⚪ Range ?" : p.in_range ? "🟢 In-range" : "🔴 Out-of-range");
@@ -356,56 +326,16 @@ function confirmFor(kind: "claim" | "remove", p: PositionCard, reposition: boole
 }
 
 
-/** Bins chart PNG for a live position, or null when per-bin data is unavailable. */
-export function binsChartFor(p: LivePosition): Buffer | null {
-  if (!p.bins?.length || p.min_bin == null || p.max_bin == null) return null;
-  const step = p.bin_step ?? 0;
-  const minPx = p.min_price ?? null;
-  const [sx, sy] = (p.pair ?? "Token/SOL").split("/");
-  try {
-    return renderBinsChart({
-      pair: p.pair ?? "Pool",
-      symX: sx,
-      symY: sy,
-      minBin: p.min_bin,
-      maxBin: p.max_bin,
-      activeId: p.active_id ?? null,
-      bins: p.bins,
-      pxUsd: p.px_usd ?? null,
-      pyUsd: p.py_usd ?? null,
-      priceOf: (id) => (minPx != null && step > 0 ? minPx * (1 + step / 10000) ** (id - p.min_bin!) : null),
-    });
-  } catch {
-    return null;
-  }
-}
-
-const capFit = (t: string) => (t.length <= 1000 ? t : t.slice(0, 990) + "…");
-
-/** Show Detail as one photo message (chart + caption card + buttons). Falls back to text. */
+/** Detail = text card. Legacy photo Details (old bins chart) are replaced by a text message. */
 export async function showPositionDetail(ctx: Context, p: LivePosition): Promise<void> {
   const msg = ctx.callbackQuery?.message;
   const kb = positionKeyboard(p.position);
-  const caption = capFit(renderPositionCard(p));
-  const png = binsChartFor(p);
-  if (!png) {
-    if (msg && "photo" in msg && msg.photo) {
-      await ctx.api.deleteMessage(msg.chat.id, msg.message_id).catch(() => undefined);
-      await ctx.reply(renderPositionCard(p), { reply_markup: kb });
-    } else await editOrReply(ctx, msg?.message_id, renderPositionCard(p), kb);
+  if (msg && "photo" in msg && msg.photo) {
+    await ctx.api.deleteMessage(msg.chat.id, msg.message_id).catch(() => undefined);
+    await ctx.reply(renderPositionCard(p as PositionCard), { reply_markup: kb });
     return;
   }
-  const file = new InputFile(png, "bins.png");
-  if (msg && "photo" in msg && msg.photo) {
-    try {
-      await ctx.editMessageMedia({ type: "photo", media: file, caption }, { reply_markup: kb });
-      return;
-    } catch (e) {
-      if (/not modified/i.test(String((e as Error).message))) return;
-    }
-  }
-  await ctx.replyWithPhoto(file, { caption, reply_markup: kb });
-  if (msg) await ctx.api.deleteMessage(msg.chat.id, msg.message_id).catch(() => undefined);
+  await editOrReply(ctx, msg?.message_id, renderPositionCard(p as PositionCard), kb);
 }
 
 /** Leaving a photo Detail: delete it so the list can be sent as text. */
