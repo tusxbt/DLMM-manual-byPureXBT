@@ -3,7 +3,9 @@
  */
 import { createRequire } from "node:module";
 import path from "node:path";
-import { createCanvas, GlobalFonts, type SKRSContext2D } from "@napi-rs/canvas";
+import fs from "node:fs";
+import { fileURLToPath } from "node:url";
+import { createCanvas, GlobalFonts, Image, loadImage, type SKRSContext2D } from "@napi-rs/canvas";
 import type { Candle } from "../engine/ohlcv.js";
 
 const require = createRequire(import.meta.url);
@@ -41,6 +43,14 @@ export type PnlCardData = {
   timeLabel: string; // e.g. "04 Nov 2026 23:25 KST"
   /** "Meteora" (datapi, same as UI) or "estimasi" (own calc) */
   source?: string;
+  /** footer fields */
+  strategy?: string | null;
+  modal?: string | null;
+  bins?: number | null;
+  /** top-right pill, e.g. "MANUAL EXIT" / "ZAPOUT" */
+  exitLabel?: string | null;
+  /** custom background image path (default assets/pnl-bg.jpg or PNL_BG_PATH) */
+  background?: string | null;
 };
 
 const BG = "#0f1420";
@@ -83,232 +93,217 @@ const kstHm = (t: number) =>
 const kstDay = (t: number) =>
   new Date(t * 1000).toLocaleDateString("en-GB", { timeZone: "Asia/Seoul", day: "2-digit", month: "short" });
 
-function drawChart(ctx: SKRSContext2D, d: PnlCardData, x: number, y: number, w: number, h: number): void {
-  ctx.fillStyle = "#131722";
-  ctx.fillRect(x, y, w, h);
-  const candles = d.candles || [];
-  if (candles.length < 2) {
-    font(ctx, 20);
-    ctx.fillStyle = MUTED;
-    ctx.fillText("Chart tidak tersedia", x + 24, y + h / 2);
-    return;
+const ACCENT = "#2dd4bf";
+const ASSETS = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../assets");
+const bgCache = new Map<string, Image | null>();
+const bgFile = (p?: string | null) => p || process.env.PNL_BG_PATH || path.join(ASSETS, "pnl-bg.jpg");
+/** Decode background (async in napi-rs) — call before renderPnlCard. Never throws. */
+export async function preloadPnlBackground(p?: string | null): Promise<void> {
+  const f = bgFile(p);
+  if (bgCache.has(f)) return;
+  try {
+    bgCache.set(f, fs.existsSync(f) ? await loadImage(f) : null);
+  } catch {
+    bgCache.set(f, null);
   }
-  const axisR = 110;
-  const axisB = 30;
-  const px0 = x + 8;
-  const pw = w - axisR - 8;
-  const py0 = y + 10;
-  const ph = h - axisB - 10;
-
-  // y-scale: candles + range + markers, 8% pad; log only if span > 5x
-  const vals = candles.flatMap((c) => [c.h, c.l]);
-  for (const v of [d.minPrice, d.maxPrice, d.entryPrice, d.exitPrice]) if (v && v > 0) vals.push(v);
-  let vmin = Math.min(...vals);
-  let vmax = Math.max(...vals);
-  if (vmax - vmin < vmax * 1e-6) {
-    vmax *= 1.01;
-    vmin *= 0.99;
-  }
-  const useLog = vmax / vmin > 5;
-  const f = (v: number) => (useLog ? Math.log(v) : v);
-  let lo = f(vmin);
-  let hi = f(vmax);
-  const pad = (hi - lo) * 0.08;
-  lo -= pad;
-  hi += pad;
-  const Y = (v: number) => py0 + ph - ((f(v) - lo) / (hi - lo)) * ph;
-
-  const n = candles.length;
-  const slot = pw / n;
-  const t0 = candles[0].t;
-  const step = n > 1 ? candles[1].t - candles[0].t : 60;
-  const X = (t: number) => px0 + ((t - t0) / step + 0.5) * slot;
-
-  // grid + price axis
-  const ticks = useLog
-    ? Array.from({ length: 5 }, (_, i) => Math.exp(lo + ((hi - lo) * (i + 0.5)) / 5))
-    : niceTicks(useLog ? vmin : lo, hi, 5);
-  font(ctx, 14);
-  for (const v of ticks) {
-    const yy = Y(v);
-    if (yy < py0 || yy > py0 + ph) continue;
-    ctx.strokeStyle = "#1f2533";
-    ctx.lineWidth = 1;
-    ctx.beginPath();
-    ctx.moveTo(px0, yy);
-    ctx.lineTo(px0 + pw, yy);
-    ctx.stroke();
-    ctx.fillStyle = MUTED;
-    ctx.fillText(fmtPx(v), px0 + pw + 8, yy + 5);
-  }
-  // time axis (KST)
-  const nT = 5;
-  const multiDay = candles[n - 1].t - t0 > 36 * 3600;
-  for (let i = 0; i < nT; i++) {
-    const idx = Math.round((i * (n - 1)) / (nT - 1));
-    const t = candles[idx].t;
-    const xx = X(t);
-    ctx.strokeStyle = "#1f2533";
-    ctx.beginPath();
-    ctx.moveTo(xx, py0);
-    ctx.lineTo(xx, py0 + ph);
-    ctx.stroke();
-    ctx.fillStyle = MUTED;
-    ctx.textAlign = i === 0 ? "left" : i === nT - 1 ? "right" : "center";
-    ctx.fillText(multiDay ? `${kstDay(t)} ${kstHm(t)}` : kstHm(t), xx, py0 + ph + 20);
-  }
-  ctx.textAlign = "left";
-  ctx.fillText("KST", px0 + pw + 8, py0 + ph + 20);
-
-  // range band
-  if (d.minPrice && d.maxPrice) {
-    ctx.fillStyle = "rgba(96,165,250,0.08)";
-    ctx.fillRect(px0, Y(d.maxPrice), pw, Y(d.minPrice) - Y(d.maxPrice));
-    for (const v of [d.maxPrice, d.minPrice]) {
-      ctx.strokeStyle = BLUE;
-      ctx.setLineDash([6, 5]);
-      ctx.lineWidth = 1.5;
-      ctx.beginPath();
-      ctx.moveTo(px0, Y(v));
-      ctx.lineTo(px0 + pw, Y(v));
-      ctx.stroke();
-      ctx.setLineDash([]);
-      ctx.fillStyle = BLUE;
-      ctx.fillRect(px0 + pw + 2, Y(v) - 10, axisR - 4, 20);
-      ctx.fillStyle = "#0b1220";
-      font(ctx, 13, true);
-      ctx.fillText(`${v === d.maxPrice ? "max" : "min"} ${fmtPx(v)}`, px0 + pw + 6, Y(v) + 5);
-    }
-  }
-
-  // candles
-  const bw = Math.max(1, Math.min(18, slot * 0.7));
-  for (const c of candles) {
-    const cx = Math.round(X(c.t)) + 0.5;
-    const flat = c.h === c.l;
-    const up = c.c >= c.o;
-    const col = flat ? "#4b5563" : up ? "#26a69a" : "#ef5350";
-    ctx.strokeStyle = col;
-    ctx.fillStyle = col;
-    ctx.lineWidth = 1;
-    ctx.beginPath();
-    ctx.moveTo(cx, Y(c.h));
-    ctx.lineTo(cx, Y(c.l));
-    ctx.stroke();
-    const top = Y(Math.max(c.o, c.c));
-    const bot = Y(Math.min(c.o, c.c));
-    ctx.fillRect(cx - bw / 2, top, bw, Math.max(1, bot - top));
-  }
-
-  // current price line (OPEN)
-  const lastC = candles[n - 1].c;
-  if (!d.closed) {
-    const v = d.exitPrice ?? lastC;
-    ctx.strokeStyle = AMBER;
-    ctx.setLineDash([2, 3]);
-    ctx.beginPath();
-    ctx.moveTo(px0, Y(v));
-    ctx.lineTo(px0 + pw, Y(v));
-    ctx.stroke();
-    ctx.setLineDash([]);
-    ctx.fillStyle = AMBER;
-    ctx.fillRect(px0 + pw + 2, Y(v) - 10, axisR - 4, 20);
-    ctx.fillStyle = "#0b1220";
-    font(ctx, 13, true);
-    ctx.fillText(fmtPx(v), px0 + pw + 6, Y(v) + 5);
-  }
-
-  // entry / exit markers at actual timestamps
-  const mark = (t: number | undefined, v: number | null | undefined, color: string, label: string, below: boolean) => {
-    if (t == null || !v || v <= 0) return;
-    const cx = X(Math.min(candles[n - 1].t, Math.max(t0, Math.floor(t / step) * step)));
-    const cy = Y(v);
-    ctx.fillStyle = color;
-    ctx.beginPath();
-    if (below) {
-      ctx.moveTo(cx, cy + 6);
-      ctx.lineTo(cx - 7, cy + 18);
-      ctx.lineTo(cx + 7, cy + 18);
-    } else {
-      ctx.moveTo(cx, cy - 6);
-      ctx.lineTo(cx - 7, cy - 18);
-      ctx.lineTo(cx + 7, cy - 18);
-    }
-    ctx.closePath();
-    ctx.fill();
-    font(ctx, 14, true);
-    const tw = ctx.measureText(label).width;
-    const right = cx > px0 + pw - tw - 20;
-    const lx = right ? cx - 10 - tw : cx + 10;
-    const ly = below ? cy + 34 : cy - 24;
-    ctx.fillStyle = "rgba(19,23,34,0.85)";
-    ctx.fillRect(lx - 4, ly - 15, tw + 8, 20);
-    ctx.fillStyle = color;
-    ctx.fillText(label, lx, ly);
-  };
-  mark(d.entryTime, d.entryPrice, AMBER, `entry ${fmtPx(d.entryPrice)}`, true);
-  if (d.closed) mark(d.exitTime, d.exitPrice ?? lastC, TEXT, `exit ${fmtPx(d.exitPrice ?? lastC)}`, false);
 }
+function loadBg(p?: string | null): Image | null {
+  return bgCache.get(bgFile(p)) ?? null;
+}
+
+let thinReady = false;
+function ensureThin(): void {
+  if (thinReady) return;
+  try {
+    GlobalFonts.registerFromPath(path.join(ASSETS, "fonts", "Oxanium.ttf"), "CardThin");
+  } catch {
+    /* DejaVu fallback */
+  }
+  thinReady = true;
+}
+const thin = (ctx: SKRSContext2D, px: number) => (ctx.font = `${px}px CardThin, CardSans, sans-serif`);
+
+function rr(ctx: SKRSContext2D, x: number, y: number, w: number, h: number, r: number): void {
+  ctx.beginPath();
+  ctx.moveTo(x + r, y);
+  ctx.arcTo(x + w, y, x + w, y + h, r);
+  ctx.arcTo(x + w, y + h, x, y + h, r);
+  ctx.arcTo(x, y + h, x, y, r);
+  ctx.arcTo(x, y, x + w, y, r);
+  ctx.closePath();
+}
+
+function pill(ctx: SKRSContext2D, text: string, xRight: number, y: number, color: string, px = 14): void {
+  thin(ctx, px);
+  const tw = ctx.measureText(text).width;
+  const w = tw + px * 1.6;
+  const h = px * 1.9;
+  rr(ctx, xRight - w, y, w, h, h / 2);
+  ctx.fillStyle = "rgba(10,14,22,0.55)";
+  ctx.fill();
+  ctx.strokeStyle = color;
+  ctx.lineWidth = 1.5;
+  ctx.stroke();
+  ctx.fillStyle = color;
+  ctx.textAlign = "center";
+  ctx.fillText(text, xRight - w / 2, y + h * 0.68);
+  ctx.textAlign = "left";
+}
+
+/** Mini candle chart in a translucent panel (logical 1024x576 coords). */
+function drawPanelChart(ctx: SKRSContext2D, d: PnlCardData, x: number, y: number, w: number, h: number): void {
+  rr(ctx, x, y, w, h, 16);
+  ctx.fillStyle = "rgba(14,18,28,0.62)";
+  ctx.fill();
+  ctx.strokeStyle = "rgba(255,255,255,0.18)";
+  ctx.lineWidth = 1;
+  ctx.stroke();
+  thin(ctx, 13);
+  ctx.fillStyle = MUTED;
+  ctx.fillText("HARGA (SOL)", x + 20, y + 28);
+  const candles = d.candles || [];
+  const last = candles.length ? candles[candles.length - 1].c : null;
+  const px = d.exitPrice ?? last;
+  const inRange = px != null && d.minPrice != null && d.maxPrice != null ? px >= d.minPrice && px <= d.maxPrice : null;
+  if (inRange != null) pill(ctx, inRange ? "IN RANGE" : "OUT OF RANGE", x + w - 20, y + 12, inRange ? GREEN : RED, 12);
+
+  const cx = x + 20, cw = w - 40, cy = y + 56, ch = h - 100;
+  if (candles.length < 2) {
+    thin(ctx, 15);
+    ctx.fillStyle = MUTED;
+    ctx.fillText("Chart tidak tersedia", cx, cy + ch / 2);
+  } else {
+    const vals = candles.flatMap((c) => [c.h, c.l]);
+    for (const v of [d.minPrice, d.maxPrice]) if (v && v > 0) vals.push(v);
+    let lo = Math.min(...vals), hi = Math.max(...vals);
+    if (hi - lo < hi * 1e-6) { hi *= 1.01; lo *= 0.99; }
+    const useLog = hi / lo > 5;
+    const f = (v: number) => (useLog ? Math.log(v) : v);
+    const pad = (f(hi) - f(lo)) * 0.08;
+    const L = f(lo) - pad, Hh = f(hi) + pad;
+    const Y = (v: number) => cy + ch - ((f(v) - L) / (Hh - L)) * ch;
+    // range band
+    if (d.minPrice && d.maxPrice) {
+      const y1 = Y(d.maxPrice), y2 = Y(d.minPrice);
+      ctx.fillStyle = "rgba(129,140,248,0.16)";
+      ctx.fillRect(cx, y1, cw - 30, Math.max(2, y2 - y1));
+      ctx.setLineDash([7, 5]);
+      ctx.strokeStyle = "rgba(165,180,252,0.85)";
+      ctx.lineWidth = 1.2;
+      for (const yy of [y1, y2]) { ctx.beginPath(); ctx.moveTo(cx, yy); ctx.lineTo(cx + cw - 30, yy); ctx.stroke(); }
+      ctx.setLineDash([]);
+    }
+    const n = candles.length;
+    const slot = (cw - 30) / n;
+    const bw = Math.max(1.5, Math.min(12, slot * 0.62));
+    candles.forEach((c, i) => {
+      const mx = cx + (i + 0.5) * slot;
+      const col = c.c >= c.o ? "#2bd99f" : "#f2546b";
+      ctx.strokeStyle = col;
+      ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.moveTo(mx, Y(c.h)); ctx.lineTo(mx, Y(c.l)); ctx.stroke();
+      const top = Y(Math.max(c.o, c.c)), bot = Y(Math.min(c.o, c.c));
+      ctx.fillStyle = col;
+      ctx.fillRect(mx - bw / 2, top, bw, Math.max(1.5, bot - top));
+    });
+    if (d.closed) {
+      const ex = cx + (n - 0.5) * slot + 6;
+      ctx.setLineDash([4, 4]);
+      ctx.strokeStyle = "rgba(255,255,255,0.75)";
+      ctx.beginPath(); ctx.moveTo(ex, cy - 4); ctx.lineTo(ex, cy + ch); ctx.stroke();
+      ctx.setLineDash([]);
+      pill(ctx, "EXIT", Math.min(x + w - 20, ex + 22), y + 42, "rgba(230,235,245,0.9)", 12);
+    }
+    thin(ctx, 12);
+    ctx.fillStyle = MUTED;
+    ctx.fillText(`HIGH ${fmtPx(Math.max(...candles.map((c) => c.h)))}`, x + 20, y + h - 18);
+    ctx.textAlign = "right";
+    ctx.fillText(`LOW ${fmtPx(Math.min(...candles.map((c) => c.l)))}`, x + w - 20, y + h - 18);
+    ctx.textAlign = "left";
+  }
+}
+
+const money = (n: number | null | undefined, sign = false) =>
+  n == null || !Number.isFinite(n)
+    ? "n/a"
+    : `${sign ? (n >= 0 ? "+" : "-") : n < 0 ? "-" : ""}$${Math.abs(n).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
 export function renderPnlCard(d: PnlCardData): Buffer {
   ensureFonts();
-  const W = 1200;
-  const H = 680;
-  const c = createCanvas(W, H);
+  ensureThin();
+  const S = 1.25; // 1280x720 output, logical 1024x576
+  const W = 1024, H = 576;
+  const c = createCanvas(W * S, H * S);
   const ctx = c.getContext("2d");
+  ctx.scale(S, S);
   ctx.fillStyle = BG;
   ctx.fillRect(0, 0, W, H);
+  const bg = loadBg(d.background);
+  if (bg) {
+    const k = Math.max(W / bg.width, H / bg.height);
+    const iw = bg.width * k, ih = bg.height * k;
+    // blur hides baked-in text of screenshot-style backgrounds; set PNL_BG_BLUR=0 for clean art
+    const blur = Number(process.env.PNL_BG_BLUR ?? 9);
+    if (blur > 0) ctx.filter = `blur(${blur}px)`;
+    ctx.drawImage(bg, (W - iw) / 2 - 20, (H - ih) / 2 - 20, iw + 40, ih + 40);
+    ctx.filter = "none";
+  }
+  const grad = ctx.createLinearGradient(0, 0, W, 0);
+  grad.addColorStop(0, "rgba(6,9,15,0.72)");
+  grad.addColorStop(0.55, "rgba(6,9,15,0.45)");
+  grad.addColorStop(1, "rgba(6,9,15,0.55)");
+  ctx.fillStyle = grad;
+  ctx.fillRect(0, 0, W, H);
 
-  const pnlColor = d.pnlUsd == null ? MUTED : d.pnlUsd >= 0 ? GREEN : RED;
-  font(ctx, 40, true);
+  // header
+  thin(ctx, 22);
   ctx.fillStyle = TEXT;
-  ctx.fillText(d.pair, 40, 64);
-  font(ctx, 20);
-  ctx.fillStyle = MUTED;
-  ctx.fillText(`Meteora DLMM · ${d.closed ? "CLOSED" : "OPEN"} · ${d.position.slice(0, 4)}…${d.position.slice(-4)}`, 40, 96);
-  ctx.textAlign = "right";
-  ctx.fillText(d.timeLabel, W - 40, 64);
-  ctx.textAlign = "left";
+  ctx.fillText("PENGOCOK LP — DLMM", 56, 58);
+  thin(ctx, 14);
+  ctx.fillStyle = ACCENT;
+  ctx.fillText("manual liquidity · meteora", 56, 80);
+  ctx.fillRect(56, 93, 64, 3);
+  ctx.fillStyle = "rgba(255,255,255,0.12)";
+  ctx.fillRect(120, 94, 300, 1);
+  pill(ctx, d.exitLabel || (d.closed ? "MANUAL EXIT" : "OPEN"), W - 40, 40, "rgba(230,235,245,0.9)", 14);
 
-  // big PnL
-  font(ctx, 64, true);
-  ctx.fillStyle = pnlColor;
-  const pnlTxt = d.pnlUsd == null ? "PnL n/a" : `${d.pnlUsd >= 0 ? "+" : "-"}$${Math.abs(d.pnlUsd).toFixed(2)}`;
-  ctx.fillText(pnlTxt, 40, 176);
-  if (d.pnlPct != null) {
-    font(ctx, 32, true);
-    ctx.fillText(`${d.pnlPct >= 0 ? "+" : ""}${d.pnlPct.toFixed(2)}%`, 40, 220);
-  }
-  if (d.source) {
-    font(ctx, 16);
-    ctx.fillStyle = MUTED;
-    ctx.fillText(d.source === "Meteora" ? "PnL: Meteora" : "PnL: estimasi", 40 + (d.pnlPct != null ? 190 : 0), 220);
-  }
+  // left
+  const pnlColor = d.pnlUsd == null ? MUTED : d.pnlUsd >= 0 ? ACCENT : RED;
+  const label = (t: string, y: number) => { thin(ctx, 13); ctx.fillStyle = MUTED; ctx.fillText(t, 56, y); };
+  label("DURASI", 150);
+  thin(ctx, 28); ctx.fillStyle = TEXT; ctx.fillText((d.duration ?? "n/a").toUpperCase(), 56, 186);
+  label("PAIR", 232);
+  thin(ctx, 42); ctx.fillStyle = TEXT; ctx.fillText(d.pair.replace("/", "-").slice(0, 16), 56, 276);
+  label(`PROFIT (USD)${d.source && d.source !== "Meteora" ? " · estimasi" : ""}`, 324);
+  thin(ctx, 64); ctx.fillStyle = pnlColor; ctx.fillText(money(d.pnlUsd, true), 56, 392);
 
-  // stats column
-  const stats: Array<[string, string]> = [
-    ["Deposit", usd(d.depositUsd)],
-    [d.closed ? (d.source === "Meteora" ? "Withdraw + fee" : "Exit (incl. fee)") : "Value + fee", usd(d.exitUsd)],
-    ["Fee earned", usd(d.feesUsd)],
-    ["Durasi", d.duration ?? "n/a"],
-    ["Range", d.minPrice && d.maxPrice ? `${fmtPx(d.minPrice)} – ${fmtPx(d.maxPrice)}` : "n/a"],
+  drawPanelChart(ctx, d, 560, 128, 416, 256);
+
+  // footer
+  ctx.fillStyle = "rgba(255,255,255,0.14)";
+  ctx.fillRect(56, 465, W - 112, 1);
+  const pct = d.pnlPct == null ? "n/a" : `${d.pnlPct >= 0 ? "+" : ""}${d.pnlPct.toFixed(2)}%`;
+  const cols: Array<[string, string, string]> = [
+    ["STRATEGI", d.strategy || "n/a", TEXT],
+    ["MODAL", d.modal || money(d.depositUsd), TEXT],
+    ["BINS", d.bins != null ? String(d.bins) : "n/a", TEXT],
+    ["FEES", money(d.feesUsd), d.feesUsd != null && d.feesUsd > 0 ? ACCENT : TEXT],
+    [d.closed ? "NILAI EXIT" : "NILAI", money(d.exitUsd), TEXT],
+    ["PNL", pct, d.pnlPct == null ? MUTED : d.pnlPct >= 0 ? ACCENT : RED],
   ];
-  let sy = 112;
-  for (const [k, v] of stats) {
-    font(ctx, 18);
-    ctx.fillStyle = MUTED;
-    ctx.fillText(k, 520, sy);
-    font(ctx, 22, true);
-    ctx.fillStyle = TEXT;
-    ctx.textAlign = "right";
-    ctx.fillText(v, W - 40, sy);
-    ctx.textAlign = "left";
-    sy += 31;
-  }
-
-  drawChart(ctx, d, 40, 280, W - 80, 365);
-  font(ctx, 14);
+  const colW = (W - 112) / cols.length;
+  cols.forEach(([k, v, col], i) => {
+    const x = 56 + i * colW;
+    thin(ctx, 12); ctx.fillStyle = MUTED; ctx.fillText(k, x, 494);
+    let px = 22;
+    thin(ctx, px);
+    while (ctx.measureText(v).width > colW - 10 && px > 12) thin(ctx, --px);
+    ctx.fillStyle = col; ctx.fillText(v, x, 524);
+  });
+  thin(ctx, 12);
   ctx.fillStyle = MUTED;
-  ctx.fillText("Harga: SOL per token · candle: GeckoTerminal · waktu: KST", 40, H - 14);
+  ctx.textAlign = "right";
+  ctx.fillText(d.timeLabel, W - 56, 556);
+  ctx.textAlign = "left";
   return c.toBuffer("image/png");
 }

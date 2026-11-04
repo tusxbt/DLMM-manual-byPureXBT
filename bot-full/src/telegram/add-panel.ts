@@ -1,3 +1,4 @@
+import { marketCap, fmtCompactUsd } from "../engine/supply.js";
 import { poolStatLines } from "./pool-format.js";
 /**
  * Pure state + rendering for the single editable /add panel.
@@ -39,6 +40,8 @@ export type AddPanelState = {
   side: PanelSide;
   /** Wallet balances cached at pool selection (display + % buttons). */
   solBalance?: number;
+  /** token supply (UI units) for MC range */
+  supply?: number | null;
   tokenBalance?: number;
   tokenUsd?: number;
   /** Amount chosen as % of balance (for display), null = manual/preset. */
@@ -318,45 +321,37 @@ export function renderPanelText(
   const strat = getStrategy(p.strategyId);
   const sym = pool ? tokenSymbol(p) : "token";
   const missing = panelMissing(p);
-  const deposit = p.side === "one_sided_sol" ? "SOL" : p.side === "one_sided_token" ? sym : `SOL + ${sym}`;
   const bal =
     p.side === "one_sided_sol"
       ? `${fmtNum(p.solBalance ?? 0)} SOL`
       : p.side === "one_sided_token"
         ? `${fmtNum(p.tokenBalance ?? 0)} ${sym}`
         : `${fmtNum(p.solBalance ?? 0)} SOL · ${fmtNum(p.tokenBalance ?? 0)} ${sym}`;
-  let rangeLine = `Range: ${rangeLabel(p.range)}`;
-  const extra: string[] = [];
+  let rangeLine = `📐 ${rangeLabel(p.range)}`;
+  let warn: string | null = null;
   if (pool) {
     const c = computeRange(p, Number(pool.bin_step || 0), p.activePrice);
-    rangeLine = `Range: ${c.total} bins (−${fmtNum(c.downPct, 1)}% → +${fmtNum(c.upPct, 1)}%)`;
-    if (c.minPrice != null && c.maxPrice != null) {
-      const u = (x: number) => (p.solUsd ? ` ($${fmtNum(x * p.solUsd, 6)})` : "");
-      extra.push(`Harga: ${fmtNum(c.minPrice, 8)}${u(c.minPrice)} → ${fmtNum(c.maxPrice, 8)}${u(c.maxPrice)} SOL`);
-    }
-    if (c.clamped) extra.push(`⚠️ Custom harga dipotong ke ${MAX_BINS_PER_POSITION} bins.`);
-    if (c.error) extra.push(`⛔ ${c.error}`);
+    const pct = c.downPct > 0 && c.upPct > 0 ? `−${fmtNum(c.downPct, 1)}%/+${fmtNum(c.upPct, 1)}%` : c.upPct > 0 ? `+${fmtNum(c.upPct, 1)}%` : `−${fmtNum(c.downPct, 1)}%`;
+    const mcA = marketCap(c.minPrice, p.solUsd ?? null, p.supply ?? null);
+    const mcB = marketCap(c.maxPrice, p.solUsd ?? null, p.supply ?? null);
+    rangeLine = `📐 ${c.total} bins (${pct})${mcA != null || mcB != null ? ` · MC ${fmtCompactUsd(mcA)}–${fmtCompactUsd(mcB)}` : ""}`;
+    if (c.error) warn = `⛔ ${c.error}`;
+    else if (c.clamped) warn = `⚠️ Dipotong ke ${MAX_BINS_PER_POSITION} bins`;
   }
   const usd = depositUsd(p);
+  const amt = missing.includes("Amount") ? "— (pilih nominal)" : `${amountText(p)}${usd ? ` ($${fmtNum(usd, 2)})` : ""}`;
   return [
-    pool ? `🎯 Setup ${sym} · ${pool.name}` : "🎯 Setup — pilih pool dulu",
-    ...(pool ? poolStatLines(pool) : []),
-    `Deposit: ${deposit}`,
-    `Balance: ${bal}`,
+    pool ? `🎯 **${sym}** · ${pool.name} · ${poolStatLines(pool)[0]}` : "🎯 Setup — pilih pool dulu",
+    pool ? poolStatLines(pool)[1] : null,
     "",
-    `Sisi: ${modeLabel(p.side)}`,
-    `Bentuk: ${strat?.label ?? p.strategyId}`,
+    `💵 ${amt} · ${p.side === "one_sided_sol" ? "SOL side" : p.side === "one_sided_token" ? "Token side" : "Double"} · bal ${bal}`,
+    `🧩 ${strat?.label ?? p.strategyId}`,
     rangeLine,
-    ...extra,
-    `Amount: ${amountText(p)}` + (usd ? ` ≈ ${fmtUsd(usd)}` : ""),
-    `Slippage: ${opts.liqSlippagePct}% · cap ${fmtUsd(opts.maxPositionUsd)} · ${opts.dryRun ? "🧪 DRY_RUN" : "⚠️ LIVE"}`,
-    "",
-    missing.length
-      ? `Pilih range & amount → 👀 Preview. (kurang: ${missing.join(", ")})`
-      : "✅ Siap — tekan 👀 Preview untuk konfirmasi.",
-    pool && !hasToken(p) ? `💡 Token side / Double tidak tersedia — wallet belum memegang ${sym}.` : null,
+    `⚙️ slip ${opts.liqSlippagePct}% · ${opts.dryRun ? "🧪 DRY_RUN" : "⚠️ LIVE"}`,
+    warn,
+    pool && !hasToken(p) ? `💡 Belum pegang ${sym} — Token/Double off` : null,
     opts.note ? `ℹ️ ${opts.note}` : null,
-    pool ? `\n🏊 Pool \`${String(pool.pool)}\`` : null,
+    missing.length ? `👉 Kurang: ${missing.join(", ")}` : "✅ Siap → 👀 Preview",
   ]
     .filter((x) => x !== null)
     .join("\n");

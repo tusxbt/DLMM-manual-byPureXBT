@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { mapPoolForTest } from "../src/engine/dlmm-read.js";
-import { poolStatLines, poolButtonLabel } from "../src/telegram/pool-format.js";
+import { poolStatLines, poolButtonLabel, poolBlock } from "../src/telegram/pool-format.js";
 
 // shape checked live on dlmm.datapi.meteora.ag/pools (Nov 2026)
 const live = {
@@ -22,16 +22,12 @@ test("datapi pool → fees 24h / total / fee-TVL", () => {
   assert.equal(p.fees_total, 11326943.36);
   assert.equal(p.volume_24h, 1692149.01);
   assert.ok(Math.abs((p.fee_tvl_24h_pct ?? 0) - 0.1326) < 1e-3);
-  assert.deepEqual(poolStatLines(p), [
-    "TVL $2.34M · Vol 24h $1.69M",
-    "Fee 24h $3.1K (0.13% TVL)",
-    "Total fee $11.3M",
-    "Bin step 20 · fee 0.2%",
-  ]);
+  assert.deepEqual(poolStatLines(p), ["bin 20 · fee 0.2%", "TVL $2.34M · F24 $3.1K (0.13%) · Tot $11.3M"]);
+  assert.equal(poolBlock(p, 0), "1. **SOL-USDC** · bin 20 · fee 0.2%\n   TVL $2.34M · F24 $3.1K (0.13%) · Tot $11.3M");
   assert.ok(poolButtonLabel(p).length <= 40);
 });
 
 test("missing stats → n/a", () => {
   const p = mapPoolForTest({ address: "x", name: "A-SOL" });
-  assert.deepEqual(poolStatLines(p), ["TVL n/a · Vol 24h n/a", "Fee 24h n/a", "Total fee n/a", "Bin step n/a · fee n/a"]);
+  assert.deepEqual(poolStatLines(p), ["bin n/a · fee n/a", "TVL n/a · F24 n/a · Tot n/a"]);
 });

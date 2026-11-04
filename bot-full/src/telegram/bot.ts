@@ -1,4 +1,4 @@
-import { poolStatLines } from "./pool-format.js";
+import { poolBlock } from "./pool-format.js";
 import { presentConfirm, setConfirmRunner } from "./confirm-ui.js";
 import type { ConfirmRequest } from "../engine/confirm.js";
 import { Bot, InlineKeyboard, type Context } from "grammy";
@@ -586,7 +586,7 @@ async function doPools(ctx: Context, query: string, forAdd = false): Promise<voi
     }
     const lines = pools.map(
       (p, i) =>
-        [`${i + 1}. **${p.name}**`, `   \`${p.pool}\``, ...poolStatLines(p).map((l) => `   ${l}`)].join("\n"),
+        poolBlock(p, i, p.pool),
     );
     await ctx.reply([`🔍 Pools untuk “${query}”:`, ...lines].join("\n\n"), {
       reply_markup: mainMenuKeyboard(),

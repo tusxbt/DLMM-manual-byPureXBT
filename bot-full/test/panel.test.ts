@@ -97,7 +97,8 @@ test("parsers", () => {
 test("render + keyboard (reference layout)", () => {
   const p = defaultPanel();
   const t = renderPanelText(p, { liqSlippagePct: 10, maxPositionUsd: 100, dryRun: true });
-  assert.match(t, /kurang: Pool, Amount/);
+  assert.match(t, /Kurang: Pool, Amount/);
+  assert.ok(t.split("\n").length <= 9, t);
   assert.match(t, /DRY_RUN/);
   const kb = panelKeyboard(p, { amountPresets: [0.5, 1, 2] }).inline_keyboard;
   const flat = JSON.stringify(kb);
@@ -113,10 +114,12 @@ test("render + keyboard (reference layout)", () => {
 test("panel text: token hint, range %, USD", () => {
   const p = { ...defaultPanel({ pool: "PoolAddr111111", name: "BONK-SOL", bin_step: 100, fee_pct: 1, tvl: 5000, token_x: { symbol: "BONK", mint: "M" } }), activePrice: 1, solUsd: 150, solBalance: 2, tokenBalance: 0, amountSol: 0.5 };
   const t = renderPanelText(p, { liqSlippagePct: 10, maxPositionUsd: 100, dryRun: false });
-  assert.match(t, /🎯 Setup BONK · BONK-SOL/);
-  assert.match(t, /Range: 40 bins \(−32\.8% → \+0% ?\)|Range: 40 bins \(−32\.8/);
-  assert.match(t, /Token side \/ Double tidak tersedia/);
-  assert.match(t, /≈ \$75/);
+  assert.match(t, /🎯 \*\*BONK\*\* · BONK-SOL · bin 100 · fee 1%/);
+  assert.match(t, /TVL \$5(\.00)?K · F24 n\/a · Tot n\/a/);
+  assert.match(t, /📐 40 bins \(−32\.8%\)/);
+  assert.match(t, /Token\/Double off/);
+  assert.match(t, /0\.5 SOL \(\$75\) · SOL side/);
+  assert.ok(t.split("\n").length <= 10, t);
 });
 
 test("amountFromPct keeps SOL reserve; depositUsd needs token price", () => {

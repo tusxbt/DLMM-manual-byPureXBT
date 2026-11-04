@@ -122,7 +122,7 @@ export async function finishClose(ctx: Context, msgId: number, o: CloseOutcome):
   const id = remember(short, `${short}\n\n${fullDetail(o)}`);
   if (o.success && o.snapshot && !o.signatures.every((x) => x.startsWith("DRY_RUN"))) {
     try {
-      const png = await buildPnlCardPng(o.snapshot, true);
+      const png = await buildPnlCardPng({ ...o.snapshot, exit_label: o.kind === "zapout" ? "ZAPOUT" : "MANUAL EXIT" }, true);
       await ctx.replyWithPhoto(new InputFile(png, "pnl.png"), { caption: short, reply_markup: closeKb(id) });
       try {
         await ctx.api.deleteMessage(ctx.chat!.id, msgId);

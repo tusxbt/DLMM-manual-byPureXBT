@@ -1,7 +1,8 @@
-import { poolStatLines, poolButtonLabel } from "./pool-format.js";
+import { poolBlock, poolButtonLabel } from "./pool-format.js";
 import { screen, section, kv } from "./layout.js";
 import { getSupplyUi, marketCap } from "../engine/supply.js";
-import { renderAddPreview } from "./preview.js";
+import { renderAddPreview, binArrayWarning, fundsLines } from "./preview.js";
+import { checkFunds } from "../engine/funds-check.js";
 import { presentConfirm } from "./confirm-ui.js";
 import { InlineKeyboard, Keyboard, type Bot, type Context } from "grammy";
 import { loadConfig, CONFIRM_TTL_MS, SOL_MINT } from "../config.js";
@@ -149,8 +150,8 @@ export async function showPoolPickerForPanel(ctx: Context, pools: Array<Record<s
     kb.text(poolButtonLabel(p), `ap:pool:${i}`).row();
   });
   kb.text("🔍 Cari lagi", "ap:search").text("🏠 Home", "ap:home");
-  const lines = pools.map((p, i) => [`${i + 1}. **${p.name}**`, ...poolStatLines(p).map((l) => `   ${l}`)].join("\n"));
-  await showSub(ctx, [`**🏊 Pilih pool DLMM**`, ...lines].join("\n\n"), kb);
+  const lines = pools.map((p, i) => poolBlock(p, i));
+  await showSub(ctx, [`**🏊 Pilih pool DLMM**`, lines.join("\n")].join("\n\n"), kb);
 }
 
 /** Fetch active price, SOL/USD, token price and wallet balances; failures are non-fatal. */
@@ -158,6 +159,12 @@ async function refreshPoolInfo(p: AddPanelState): Promise<void> {
   if (!p.pool?.pool) return;
   try {
     p.activePrice = (await getActiveBin(String(p.pool.pool))).price;
+    try {
+      const m = tokenMint(p);
+      p.supply = m ? await getSupplyUi(m) : null;
+    } catch {
+      p.supply = null;
+    }
   } catch {
     p.activePrice = undefined;
   }
@@ -221,6 +228,21 @@ async function deployPanel(ctx: Context): Promise<void> {
       poolName: String(p.pool?.name || ""),
       mixPct: loadSettings().mixBidAskPct,
     });
+    const rent = built.rent ?? built.quote ?? null;
+    const funds = checkFunds({
+      haveSol: p.solBalance,
+      amountSol: sol,
+      positionRentSol: rent?.positionRentSol,
+      binArrayRentSol: rent?.binArrayRentSol,
+      txCount: built.txs.length,
+    });
+    if (!funds.ok && !cfg.dryRun) {
+      const warn = binArrayWarning(rent);
+      return renderAddPanel(
+        ctx,
+        `${fundsLines(funds)}${warn ? `\n${warn}` : ""}\nKurangi nominal atau top-up SOL.`,
+      );
+    }
     const sup = tokenMint(p) ? await getSupplyUi(tokenMint(p)!) : null;
     const summary = renderAddPreview({
       pool: String(p.pool?.name || ""),
@@ -244,6 +266,8 @@ async function deployPanel(ctx: Context): Promise<void> {
       capUsd: cfg.maxPositionUsd,
       slippagePct: getLiqSlippagePct(),
       wide: built.quote ?? null,
+      rent,
+      funds,
       position: built.position,
       dryRun: cfg.dryRun,
       ttlSec: CONFIRM_TTL_MS / 1000,

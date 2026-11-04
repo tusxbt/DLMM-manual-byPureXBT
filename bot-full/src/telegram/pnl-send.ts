@@ -3,8 +3,9 @@ import type { MeteoraPnl } from "../engine/meteora-pnl.js";
 import { InputFile, type Context } from "grammy";
 import { log, redactSecrets } from "../logger.js";
 import { fetchOhlcv } from "../engine/ohlcv.js";
-import { renderPnlCard, type PnlCardData } from "../render/pnl-card.js";
+import { renderPnlCard, preloadPnlBackground, type PnlCardData } from "../render/pnl-card.js";
 import { fmtAge } from "./positions-view.js";
+import { getTrackedPosition, type TrackedPosition } from "../store/positions.js";
 
 export type PositionSnapshot = {
   pair?: string;
@@ -21,6 +22,10 @@ export type PositionSnapshot = {
   entry_price?: number | null;
   /** Meteora datapi PnL (preferred) */
   meteora?: MeteoraPnl | null;
+  strategy?: string | null;
+  bins?: number | null;
+  amount_sol?: number | null;
+  exit_label?: string | null;
 };
 
 export function snapshotOf(p: Record<string, unknown>): PositionSnapshot {
@@ -39,6 +44,23 @@ export function snapshotOf(p: Record<string, unknown>): PositionSnapshot {
     active_price: n(p.active_price),
     entry_price: n(p.entry_price),
     meteora: (p.meteora as MeteoraPnl | undefined) ?? null,
+    ...trackedExtras(p),
+  };
+}
+
+function trackedExtras(p: Record<string, unknown>): Pick<PositionSnapshot, "strategy" | "bins" | "amount_sol"> {
+  let t: TrackedPosition | undefined;
+  try {
+    t = getTrackedPosition(String(p.position));
+  } catch {
+    t = undefined;
+  }
+  const minB = Number(p.min_bin ?? t?.min_bin), maxB = Number(p.max_bin ?? t?.max_bin);
+  const raw = (p.strategy_text as string) || t?.strategy_label || t?.strategy || null;
+  return {
+    strategy: raw ? (raw === raw.toLowerCase() ? raw.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase()) : raw) : null,
+    bins: Number.isFinite(minB) && Number.isFinite(maxB) ? maxB - minB + 1 : null,
+    amount_sol: t?.amount_sol ?? null,
   };
 }
 
@@ -61,6 +83,7 @@ export function cardDataFromSnapshot(s: PositionSnapshot, closed: boolean, now =
       feesUsd: m.feesUsd,
       pnlUsd: m.pnlUsd,
       pnlPct: m.pnlPct,
+      modal: m.depositUsd == null && s.amount_sol ? `${s.amount_sol} SOL` : null,
       source: "Meteora",
     };
   }
@@ -88,6 +111,10 @@ function ownCard(s: PositionSnapshot, closed: boolean, now: Date): PnlCardData {
     entryTime: s.opened_at && Number.isFinite(Date.parse(s.opened_at)) ? Math.floor(Date.parse(s.opened_at) / 1000) : undefined,
     exitTime: Math.floor(now.getTime() / 1000),
     timeLabel: kstStamp(now),
+    strategy: s.strategy ?? null,
+    bins: s.bins ?? null,
+    modal: dep == null && s.amount_sol ? `${s.amount_sol} SOL` : null,
+    exitLabel: s.exit_label ?? null,
   };
 }
 
@@ -102,6 +129,7 @@ export async function buildPnlCardPng(s: PositionSnapshot, closed: boolean): Pro
   } catch (e) {
     log("pnl_card", `ohlcv failed: ${(e as Error).message}`, "warn");
   }
+  await preloadPnlBackground(d.background);
   return renderPnlCard(d);
 }
 

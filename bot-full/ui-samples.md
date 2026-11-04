@@ -4,60 +4,49 @@
 
 ## Pool picker (+ 1 button per pool)
 
-_max line: 30 chars_
+_max line: 47 chars_
 
 ```
 **🏊 Pilih pool DLMM**
 
-1. **SOL-USDC**
-   TVL $4.47M · Vol 24h $32.3M
-   Fee 24h $13.8K (0.31% TVL)
-   Total fee $11.7M
-   Bin step 4 · fee 0.04%
-
-2. **Donkey-SOL**
-   TVL $182K · Vol 24h $940K
-   Fee 24h $9.4K (5.16% TVL)
-   Total fee $211K
-   Bin step 100 · fee 1%
+1. **SOL-USDC** · bin 4 · fee 0.04%
+   TVL $4.47M · F24 $13.8K (0.31%) · Tot $11.7M
+2. **Donkey-SOL** · bin 100 · fee 1%
+   TVL $182K · F24 $9.4K (5.16%) · Tot $211K
 ```
 
-## /add Preview
+## /add panel (+ buttons)
 
-_max line: 27 chars_
+_max line: 43 chars_
 
 ```
-**👀 Preview Add LP**
+🎯 **Donkey** · Donkey-SOL · bin 100 · fee 1%
+TVL $182K · F24 $9.4K (5.16%) · Tot $211K
 
-Pool: Donkey-SOL
-Mode: ⚠️ LIVE
+💵 0.5 SOL ($48.5) · SOL side · bal 2.1 SOL
+🧩 Bid-Ask
+📐 40 bins (−32.8%) · MC $270K–$402K
+⚙️ slip 10% · ⚠️ LIVE
+💡 Belum pegang Donkey — Token/Double off
+✅ Siap → 👀 Preview
+```
 
-**💵 Amount**
-Total: 0.5 SOL
-Sisi: SOL side
-Strategi: Mix 70/30
-BidAsk 70%: 0.35 SOL
-Spot 30%: 0.15 SOL
-Nilai: $48.50 / cap $100.00
+## /add Preview (wide, new bin arrays)
 
-**📐 Range**
-Bins: 70 (70↓ 0↑)
-Persen: −50.2% / +0%
-Min: 0.0₅206 ($0.0001998)
-Max: 0.0₅414 ($0.0004016)
-MC: $2.06M–$4.14M
-MC now: $4.14M
+_max line: 50 chars_
 
-**🧾 Biaya**
-Tx: 3
-Rent pos: ≈0.0582 SOL
-  (kembali saat close)
-Bin array: ≈0 SOL
-  (tidak kembali)
-Slippage: 10%
+```
+👀 **Donkey-SOL** · ⚠️ LIVE
 
-📍 Posisi baru
-`7b9f6yDvVthv3BXDL6isBWe8gcrbjBVvXrJz7yKV1tcg`
+💵 0.5 SOL ($48.50) · Mix 70/30 · SOL side
+🔀 BidAsk 70% 0.35 SOL · Spot 30% 0.15 SOL
+📐 0.0₅206–0.0₅414 · 70 bins (−50.2%)
+🏷 MC $2.06M–$4.14M (now $4.14M)
+🧾 3 tx · rent ≈0.058 SOL (kembali) · slip 10%
+
+⚠️ **Bin array baru: 2 × ≈0.0712 SOL (tidak kembali)**
+Sisakan SOL ekstra di wallet.
+
 ⏳ Konfirmasi 60s
 ```
 
@@ -95,7 +84,7 @@ Fee: $1.24
 In range: 1/2
 
 Pilih posisi ⬇️
-🕐 00:46:38 KST
+🕐 01:04:14 KST
 ```
 
 ## Close / Zapout result (+ ℹ️ Detail button)

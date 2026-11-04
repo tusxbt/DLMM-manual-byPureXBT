@@ -61,6 +61,8 @@ export type WideQuote = {
 
 export type BuildAddResult = {
   quote?: WideQuote;
+  /** rent quote for any path (single-tx too): position rent (refundable) + new bin arrays (not refundable) */
+  rent?: Omit<WideQuote, "txCount">;
   mix?: { pct: number; primaryText: string; spotText: string };
   txs: PendingTxItem[];
   position: string;
@@ -118,7 +120,13 @@ export async function buildAddLiquidityTxs(input: {
   const totalY = amountY;
   amountX = split.primaryX;
   const amountYPrimary = split.primaryY;
-  const finish = async (r: BuildAddResult): Promise<BuildAddResult> => {
+  const finish = async (r0: BuildAddResult): Promise<BuildAddResult> => {
+    const r = r0;
+    if (!r.rent) {
+      r.rent = r.quote
+        ? { positionRentSol: r.quote.positionRentSol, binArrayRentSol: r.quote.binArrayRentSol, binArraysCount: r.quote.binArraysCount }
+        : await quoteWide(pool, { minBinId, maxBinId, strategyType: st });
+    }
     if (!isMix) return r;
     const spotTxs = (
       await buildWideAddTxs(pool, positionKp.publicKey, user, split.spotX, split.spotY, {
