@@ -1,3 +1,4 @@
+import { bgForCurrentUser } from "./pnl-bg.js";
 import type { MeteoraPnl } from "../engine/meteora-pnl.js";
 /** Build + send PnL card photos. Never throws (image is best-effort, never blocks a close). */
 import { InputFile, type Context } from "grammy";
@@ -129,6 +130,7 @@ export async function buildPnlCardPng(s: PositionSnapshot, closed: boolean): Pro
   } catch (e) {
     log("pnl_card", `ohlcv failed: ${(e as Error).message}`, "warn");
   }
+  Object.assign(d, bgForCurrentUser());
   await preloadPnlBackground(d.background);
   return renderPnlCard(d);
 }

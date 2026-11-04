@@ -1,3 +1,4 @@
+import { registerPnlBgUi } from "./pnl-bg.js";
 import { poolBlock } from "./pool-format.js";
 import { presentConfirm, setConfirmRunner } from "./confirm-ui.js";
 import type { ConfirmRequest } from "../engine/confirm.js";
@@ -223,6 +224,7 @@ export function createBot(): Bot {
   registerPositionsView(bot);
   registerCloseUi(bot);
   registerSettingsPanel(bot);
+  registerPnlBgUi(bot, cfg.telegramToken);
 
   // claim / remove index callbacks
   bot.callbackQuery(/^pos:(claim|remove):(\d+)$/, async (ctx) => {

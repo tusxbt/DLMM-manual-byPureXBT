@@ -51,6 +51,10 @@ export type PnlCardData = {
   exitLabel?: string | null;
   /** custom background image path (default assets/pnl-bg.jpg or PNL_BG_PATH) */
   background?: string | null;
+  /** overlay darkness 20–95 % (default 70) */
+  bgDarkPct?: number | null;
+  /** background blur px (default PNL_BG_BLUR or 0) */
+  bgBlur?: number | null;
 };
 
 const BG = "#0f1420";
@@ -99,18 +103,28 @@ const DOWN = "#fb7185";
 const ASSETS = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../assets");
 const bgCache = new Map<string, Image | null>();
 const bgFile = (p?: string | null) => p || process.env.PNL_BG_PATH || "";
-/** Decode background (async in napi-rs) — call before renderPnlCard. Never throws. */
+const bgKey = (f: string) => {
+  try {
+    return `${f}@${fs.statSync(f).mtimeMs}`;
+  } catch {
+    return `${f}@none`;
+  }
+};
+/** Decode background (async in napi-rs) — call before renderPnlCard. Never throws. Cache keyed by mtime. */
 export async function preloadPnlBackground(p?: string | null): Promise<void> {
   const f = bgFile(p);
-  if (!f || bgCache.has(f)) return;
+  if (!f) return;
+  const k = bgKey(f);
+  if (bgCache.has(k)) return;
   try {
-    bgCache.set(f, fs.existsSync(f) ? await loadImage(f) : null);
+    bgCache.set(k, fs.existsSync(f) ? await loadImage(f) : null);
   } catch {
-    bgCache.set(f, null);
+    bgCache.set(k, null);
   }
 }
 function loadBg(p?: string | null): Image | null {
-  return bgCache.get(bgFile(p)) ?? null;
+  const f = bgFile(p);
+  return f ? (bgCache.get(bgKey(f)) ?? null) : null;
 }
 
 let thinReady = false;
@@ -145,8 +159,13 @@ export function renderPnlCard(d: PnlCardData): Buffer {
   const bg = loadBg(d.background);
   if (bg) {
     const k = Math.max(W / bg.width, H / bg.height);
-    ctx.drawImage(bg, (W - bg.width * k) / 2, (H - bg.height * k) / 2, bg.width * k, bg.height * k);
-    ctx.fillStyle = "rgba(11,15,20,0.7)";
+    const blur = Math.max(0, Math.min(30, d.bgBlur ?? Number(process.env.PNL_BG_BLUR ?? 0)));
+    if (blur > 0) ctx.filter = `blur(${blur}px)`;
+    const m = blur * 2; // bleed so blurred edges stay filled
+    ctx.drawImage(bg, (W - bg.width * k) / 2 - m, (H - bg.height * k) / 2 - m, bg.width * k + 2 * m, bg.height * k + 2 * m);
+    ctx.filter = "none";
+    const dark = Math.max(20, Math.min(95, d.bgDarkPct ?? 70)) / 100; // never fully bright: text must stay readable
+    ctx.fillStyle = `rgba(11,15,20,${dark})`;
     ctx.fillRect(0, 0, W, H);
   }
   // one soft accent: glow behind the number
@@ -237,7 +256,7 @@ export function renderPnlCard(d: PnlCardData): Buffer {
     ["Fees", money(d.feesUsd), d.feesUsd != null && d.feesUsd > 0 ? UP : TEXT],
     ["Durasi", d.duration ?? "n/a", TEXT],
     ["Bins", d.bins != null ? String(d.bins) : "n/a", TEXT],
-    ["Range", inR == null ? "n/a" : inR ? "in range" : "out", inR == null ? TEXT : inR ? UP : DOWN],
+    ["Status", inR == null ? "n/a" : inR ? "in range" : "out", inR == null ? TEXT : inR ? UP : DOWN],
   ];
   const sw = (W - 140) / stats.length;
   stats.forEach(([k, v, cl], i) => {

@@ -563,6 +563,7 @@ function settingsKb(): InlineKeyboard {
     .text("✏️ Range % presets", "st:edit:pct")
     .row()
     .text("✏️ Mix ratio", "st:edit:mix")
+    .text("🖼 Background PnL", "st:bg")
     .row()
     .text("⬅️ Menu", "menu:cancel");
 }

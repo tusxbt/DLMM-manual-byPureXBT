@@ -22,6 +22,8 @@ export type WizardData = {
   panel?: AddPanelState;
   panelMsgId?: number;
   settingsMsgId?: number;
+  /** waiting for a PnL background photo from this user */
+  awaitingBg?: boolean;
   posPage?: number;
 };
 

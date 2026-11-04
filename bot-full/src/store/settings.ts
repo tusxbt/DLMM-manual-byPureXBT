@@ -12,6 +12,9 @@ export type Settings = {
   autoConfirm: boolean;
   /** Mix strategy: % of amount deployed as BidAsk (rest Spot), 1–99. */
   mixBidAskPct: number;
+  /** PnL card custom background: overlay darkness % and blur px */
+  pnlBgDarkPct: number;
+  pnlBgBlur: number;
   /** ComputeBudget price for DLMM txs, micro-lamports per CU. 0 = auto (recent fees). */
   priorityFeeMicroLamports: number;
   /** Max priority fee Jupiter may add per swap, in lamports. */
@@ -69,6 +72,8 @@ function buildDefault(): Settings {
     binPresets: { narrow: 20, medium: 40, wide: 69 },
     autoConfirm: false,
     mixBidAskPct: 70,
+    pnlBgDarkPct: 60,
+    pnlBgBlur: 0,
     priorityFeeMicroLamports: envInt("PRIORITY_FEE_MICROLAMPORTS", 0, 0, 5_000_000),
     jupPriorityMaxLamports: envInt("JUP_PRIORITY_MAX_LAMPORTS", 1_000_000, 0, 10_000_000),
     swapSlippagePct: envPct("SWAP_SLIPPAGE_PCT", 10),
@@ -95,6 +100,8 @@ export function loadSettings(): Settings {
     binPresets: coerceBinPresets(s.binPresets, defaults.binPresets),
     autoConfirm: s.autoConfirm === true,
     mixBidAskPct: clampInt(s.mixBidAskPct, 70, 1, 99),
+    pnlBgDarkPct: clampInt(s.pnlBgDarkPct, 60, 20, 95),
+    pnlBgBlur: clampInt(s.pnlBgBlur, 0, 0, 30),
     rangePresets: Array.isArray(s.rangePresets) ? s.rangePresets.filter((r) => r && Number.isFinite(r.down) && Number.isFinite(r.up)).slice(0, 4) : defaults.rangePresets,
     priorityFeeMicroLamports: clampInt(s.priorityFeeMicroLamports, defaults.priorityFeeMicroLamports, 0, 5_000_000),
     jupPriorityMaxLamports: clampInt(s.jupPriorityMaxLamports, defaults.jupPriorityMaxLamports, 0, 10_000_000),
