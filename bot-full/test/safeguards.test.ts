@@ -131,8 +131,14 @@ test("DRY_RUN executePendingTxs does not need network send", async () => {
   resetConfigForTests();
   loadConfig({ requireTelegram: false });
   const { executePendingTxs } = await import("../src/engine/executor.js");
+  const { Transaction, SystemProgram, PublicKey } = await import("@solana/web3.js");
+  const tx = new Transaction().add(
+    SystemProgram.transfer({ fromPubkey: loadConfig({ requireTelegram: false }).walletPublicKey, toPubkey: PublicKey.default, lamports: 1 }),
+  );
+  tx.feePayer = loadConfig({ requireTelegram: false }).walletPublicKey;
+  tx.recentBlockhash = "11111111111111111111111111111111";
   const r = await executePendingTxs([
-    { serialized: "AQID", encoding: "legacy", label: "dummy" },
+    { serialized: tx.serialize({ requireAllSignatures: false }).toString("base64"), encoding: "legacy", label: "dummy" },
   ]);
   assert.equal(r.success, true);
   assert.equal(r.dryRun, true);
