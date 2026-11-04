@@ -2,6 +2,26 @@
 
 `**x**` = bold, backtick = tap-to-copy. Max line excludes addresses (own line).
 
+## Pool picker (+ 1 button per pool)
+
+_max line: 30 chars_
+
+```
+**🏊 Pilih pool DLMM**
+
+1. **SOL-USDC**
+   TVL $4.47M · Vol 24h $32.3M
+   Fee 24h $13.8K (0.31% TVL)
+   Total fee $11.7M
+   Bin step 4 · fee 0.04%
+
+2. **Donkey-SOL**
+   TVL $182K · Vol 24h $940K
+   Fee 24h $9.4K (5.16% TVL)
+   Total fee $211K
+   Bin step 100 · fee 1%
+```
+
 ## /add Preview
 
 _max line: 27 chars_
@@ -75,7 +95,7 @@ Fee: $1.24
 In range: 1/2
 
 Pilih posisi ⬇️
-🕐 00:44:15 KST
+🕐 00:46:38 KST
 ```
 
 ## Close / Zapout result (+ ℹ️ Detail button)

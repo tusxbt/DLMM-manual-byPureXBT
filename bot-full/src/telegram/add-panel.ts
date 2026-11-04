@@ -1,3 +1,4 @@
+import { poolStatLines } from "./pool-format.js";
 /**
  * Pure state + rendering for the single editable /add panel.
  * No network / Telegram side effects here so it can be unit-tested.
@@ -339,9 +340,7 @@ export function renderPanelText(
   const usd = depositUsd(p);
   return [
     pool ? `🎯 Setup ${sym} · ${pool.name}` : "🎯 Setup — pilih pool dulu",
-    pool
-      ? `${sym} · fee ${fmtNum(Number(pool.fee_pct), 2)}% · step ${pool.bin_step} · TVL ${fmtUsd(Number(pool.tvl))}`
-      : null,
+    ...(pool ? poolStatLines(pool) : []),
     `Deposit: ${deposit}`,
     `Balance: ${bal}`,
     "",

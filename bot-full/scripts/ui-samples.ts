@@ -35,7 +35,13 @@ async function main() {
   const close = compactResult({ kind: "zapout", pair: "Donkey/SOL", success: true, signatures: ["a", "5xTxSig"], ms: 3012, solReceived: 0.5509, snapshot: { pool: "p", position: "q", total_value_usd: null, unclaimed_fees_usd: null, meteora: { ...met, closed: true } } });
   const closeErr = compactResult({ kind: "remove", pair: "AMD/SOL", success: false, signatures: [], ms: 1, error: "block height exceeded" });
   const wallet = walletText({ wallet: "9xQeWvG816bUx9EPjHmaT23yvVM2ZWbrrpZb9PusVFin", sol: 1.2345, solUsd: 119.75, usdc: 12.5, totalUsd: 132.25, owner: true, dryRun: false, capPos: 100, capSwap: 100 });
-  const blocks: [string, string][] = [["/add Preview", preview], ["Position card", renderPositionCard(card as never, now)], ["Positions list (+ 1 button per posisi)", list], ["Close / Zapout result (+ ℹ️ Detail button)", close], ["Close error", closeErr], ["Wallet", wallet], ["Admin", adminText()], ["Settings", settingsText()]];
+  const { poolStatLines } = await import("../src/telegram/pool-format.js");
+  const pools = [
+    { name: "SOL-USDC", tvl: 4_470_000, volume_24h: 32_300_000, fees_24h: 13_800, fees_total: 11_700_000, fee_tvl_24h_pct: 0.31, bin_step: 4, fee_pct: 0.04 },
+    { name: "Donkey-SOL", tvl: 182_000, volume_24h: 940_000, fees_24h: 9_400, fees_total: 211_000, fee_tvl_24h_pct: 5.16, bin_step: 100, fee_pct: 1 },
+  ];
+  const picker = ["**🏊 Pilih pool DLMM**", ...pools.map((p, i) => [`${i + 1}. **${p.name}**`, ...poolStatLines(p).map((l) => `   ${l}`)].join("\n"))].join("\n\n");
+  const blocks: [string, string][] = [["Pool picker (+ 1 button per pool)", picker], ["/add Preview", preview], ["Position card", renderPositionCard(card as never, now)], ["Positions list (+ 1 button per posisi)", list], ["Close / Zapout result (+ ℹ️ Detail button)", close], ["Close error", closeErr], ["Wallet", wallet], ["Admin", adminText()], ["Settings", settingsText()]];
   const md = ["# DLMM bot — UI samples", "", "`**x**` = bold, backtick = tap-to-copy. Max line excludes addresses (own line).", ""];
   for (const [t, b] of blocks) {
     const lens = b.split("\n").filter((l) => !/^`[1-9A-HJ-NP-Za-km-z]{32,44}`$/.test(l.trim())).map((l) => l.replace(/\[(.*?)\]\(.*?\)/g, "$1").replace(/\*\*|`/g, "").length);

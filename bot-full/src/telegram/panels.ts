@@ -1,3 +1,4 @@
+import { poolStatLines, poolButtonLabel } from "./pool-format.js";
 import { screen, section, kv } from "./layout.js";
 import { getSupplyUi, marketCap } from "../engine/supply.js";
 import { renderAddPreview } from "./preview.js";
@@ -145,12 +146,11 @@ export async function showPoolPickerForPanel(ctx: Context, pools: Array<Record<s
   if (!s.data.panel) s.data.panel = defaultPanel(undefined, loadSettings().binPresets);
   const kb = new InlineKeyboard();
   pools.forEach((p, i) => {
-    const label = `${p.name} · ${fmtNum(Number(p.fee_pct), 2)}% · ${fmtUsd(Number(p.tvl))}`;
-    kb.text(label.slice(0, 40), `ap:pool:${i}`).row();
+    kb.text(poolButtonLabel(p), `ap:pool:${i}`).row();
   });
   kb.text("🔍 Cari lagi", "ap:search").text("🏠 Home", "ap:home");
-  const lines = pools.map((p, i) => `${i + 1}. ${p.name} · step ${p.bin_step} · fee ${fmtNum(Number(p.fee_pct), 2)}% · TVL ${fmtUsd(Number(p.tvl))}`);
-  await showSub(ctx, [`🏊 Pilih pool DLMM (urut TVL):`, ...lines].join("\n"), kb);
+  const lines = pools.map((p, i) => [`${i + 1}. **${p.name}**`, ...poolStatLines(p).map((l) => `   ${l}`)].join("\n"));
+  await showSub(ctx, [`**🏊 Pilih pool DLMM**`, ...lines].join("\n\n"), kb);
 }
 
 /** Fetch active price, SOL/USD, token price and wallet balances; failures are non-fatal. */

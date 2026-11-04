@@ -14,6 +14,10 @@ export type PoolHit = {
   fee_pct: number | null;
   tvl: number | null;
   volume_24h: number | null;
+  /** pool LP fees (USD) last 24h, all-time; fee/TVL 24h in % */
+  fees_24h?: number | null;
+  fees_total?: number | null;
+  fee_tvl_24h_pct?: number | null;
   token_x?: { symbol?: string; mint?: string };
   token_y?: { symbol?: string; mint?: string };
 };
@@ -24,13 +28,34 @@ export function tokenInfo(obj: unknown, legacySymbol?: unknown, legacyMint?: unk
   return { symbol: String(o.symbol || legacySymbol || ""), mint: String(o.address || legacyMint || "") };
 }
 
+function numOrNull(v: unknown): number | null {
+  if (v == null || v === "") return null;
+  const n = Number(v);
+  return Number.isFinite(n) ? n : null;
+}
+
+/** Map one datapi pool object (exported for tests). */
+export function mapPoolForTest(p: Record<string, unknown>): PoolHit {
+  return mapPool(p);
+}
+
 export async function searchPools(query: string, limit = 8): Promise<PoolHit[]> {
   const url = `https://dlmm.datapi.meteora.ag/pools?query=${encodeURIComponent(query)}`;
   const res = await fetch(url);
   if (!res.ok) throw new Error(`Pool search HTTP ${res.status}`);
   const data = await res.json();
   const raw = (Array.isArray(data) ? data : data.data || []) as Record<string, unknown>[];
-  const mapped = raw.map((p: Record<string, unknown>) => {
+  const mapped = raw.map(mapPool);
+  mapped.sort((a, b) => {
+    const tv = (b.tvl ?? 0) - (a.tvl ?? 0);
+    if (tv !== 0) return tv;
+    return (b.volume_24h ?? 0) - (a.volume_24h ?? 0);
+  });
+  return mapped.slice(0, limit);
+}
+
+function mapPool(p: Record<string, unknown>): PoolHit {
+  {
     const poolConfig = (p.pool_config || {}) as Record<string, unknown>;
     const volume = (p.volume || {}) as Record<string, unknown>;
     return {
@@ -39,17 +64,14 @@ export async function searchPools(query: string, limit = 8): Promise<PoolHit[]> 
       bin_step: Number(poolConfig.bin_step ?? p.bin_step ?? null) || null,
       fee_pct: Number(poolConfig.base_fee_pct ?? p.base_fee_percentage ?? p.fee_pct ?? null) || null,
       tvl: Number(p.tvl ?? p.liquidity ?? null) || null,
-      volume_24h: Number(volume.h24 ?? p.trade_volume_24h ?? null) || null,
+      volume_24h: numOrNull(volume["24h"] ?? volume.h24 ?? p.trade_volume_24h),
+      fees_24h: numOrNull(((p.fees || {}) as Record<string, unknown>)["24h"] ?? p.fees_24h),
+      fees_total: numOrNull(((p.cumulative_metrics || {}) as Record<string, unknown>).fees ?? p.cumulative_fee_volume),
+      fee_tvl_24h_pct: numOrNull(((p.fee_tvl_ratio || {}) as Record<string, unknown>)["24h"]),
       token_x: tokenInfo(p.token_x, (p as { mint_x_symbol?: string }).mint_x_symbol, p.mint_x),
       token_y: tokenInfo(p.token_y, (p as { mint_y_symbol?: string }).mint_y_symbol, p.mint_y),
     };
-  });
-  mapped.sort((a, b) => {
-    const tv = (b.tvl ?? 0) - (a.tvl ?? 0);
-    if (tv !== 0) return tv;
-    return (b.volume_24h ?? 0) - (a.volume_24h ?? 0);
-  });
-  return mapped.slice(0, limit);
+  }
 }
 
 export async function getActiveBin(poolAddress: string): Promise<{ binId: number; price: number }> {
