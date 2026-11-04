@@ -8,10 +8,11 @@ const candles = Array.from({ length: 48 }, (_, i) => {
   return { t: t0 + i * 300, o, c: p, h: Math.max(o, p) * 1.01, l: Math.min(o, p) * 0.99 };
 });
 await preloadPnlBackground();
+const loss = process.argv[3] === "loss";
 const png = renderPnlCard({
   pair: "RAM/SOL", position: "7b9f6yDvVthv3BXDL6isBWe8gcrbjBVvXrJz7yKV1tcg", closed: true,
-  depositUsd: 552.12, exitUsd: 629.02, feesUsd: 76.45, pnlUsd: 76.9, pnlPct: 13.93,
+  depositUsd: 552.12, exitUsd: loss ? 510.82 : 629.02, feesUsd: loss ? 3.12 : 76.45, pnlUsd: loss ? -41.3 : 76.9, pnlPct: loss ? -7.48 : 13.93,
   duration: "4j 12m", minPrice: 0.0000112, maxPrice: 0.0000146, exitPrice: p, candles,
-  timeLabel: "05 Nov 2026 01:10 KST", source: "Meteora", strategy: "Mix 70/30", bins: 69, exitLabel: "ZAPOUT",
+  timeLabel: "05 Nov 2026 01:10 KST", source: "Meteora", strategy: "Mix 70/30", bins: 69, exitLabel: loss ? "MANUAL EXIT" : "ZAPOUT",
 });
 fs.writeFileSync(process.argv[2] || "sample-pnl.png", png);

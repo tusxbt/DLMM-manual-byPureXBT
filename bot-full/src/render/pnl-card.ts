@@ -93,14 +93,16 @@ const kstHm = (t: number) =>
 const kstDay = (t: number) =>
   new Date(t * 1000).toLocaleDateString("en-GB", { timeZone: "Asia/Seoul", day: "2-digit", month: "short" });
 
-const ACCENT = "#2dd4bf";
+const ACCENT = "#a78bfa"; // brand violet
+const UP = "#34d399";
+const DOWN = "#fb7185";
 const ASSETS = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../assets");
 const bgCache = new Map<string, Image | null>();
-const bgFile = (p?: string | null) => p || process.env.PNL_BG_PATH || path.join(ASSETS, "pnl-bg.jpg");
+const bgFile = (p?: string | null) => p || process.env.PNL_BG_PATH || "";
 /** Decode background (async in napi-rs) — call before renderPnlCard. Never throws. */
 export async function preloadPnlBackground(p?: string | null): Promise<void> {
   const f = bgFile(p);
-  if (bgCache.has(f)) return;
+  if (!f || bgCache.has(f)) return;
   try {
     bgCache.set(f, fs.existsSync(f) ? await loadImage(f) : null);
   } catch {
@@ -138,7 +140,7 @@ function pill(ctx: SKRSContext2D, text: string, xRight: number, y: number, color
   const tw = ctx.measureText(text).width;
   const w = tw + px * 1.6;
   const h = px * 1.9;
-  rr(ctx, xRight - w, y, w, h, h / 2);
+  rr(ctx, xRight - w, y, w, h, 6);
   ctx.fillStyle = "rgba(10,14,22,0.55)";
   ctx.fill();
   ctx.strokeStyle = color;
@@ -236,45 +238,73 @@ export function renderPnlCard(d: PnlCardData): Buffer {
   const c = createCanvas(W * S, H * S);
   const ctx = c.getContext("2d");
   ctx.scale(S, S);
-  ctx.fillStyle = BG;
+  const up = d.pnlUsd == null || d.pnlUsd >= 0;
+  const tint = up ? "52,211,153" : "251,113,133";
+  const base = ctx.createLinearGradient(0, 0, W, H);
+  base.addColorStop(0, "#0d1530");
+  base.addColorStop(0.6, "#070a14");
+  base.addColorStop(1, "#020306");
+  ctx.fillStyle = base;
   ctx.fillRect(0, 0, W, H);
   const bg = loadBg(d.background);
   if (bg) {
     const k = Math.max(W / bg.width, H / bg.height);
     const iw = bg.width * k, ih = bg.height * k;
-    // blur hides baked-in text of screenshot-style backgrounds; set PNL_BG_BLUR=0 for clean art
-    const blur = Number(process.env.PNL_BG_BLUR ?? 9);
+    const blur = Number(process.env.PNL_BG_BLUR ?? 0);
     if (blur > 0) ctx.filter = `blur(${blur}px)`;
-    ctx.drawImage(bg, (W - iw) / 2 - 20, (H - ih) / 2 - 20, iw + 40, ih + 40);
+    ctx.drawImage(bg, (W - iw) / 2, (H - ih) / 2, iw, ih);
     ctx.filter = "none";
+    ctx.fillStyle = "rgba(4,6,12,0.6)";
+    ctx.fillRect(0, 0, W, H);
   }
-  const grad = ctx.createLinearGradient(0, 0, W, 0);
-  grad.addColorStop(0, "rgba(6,9,15,0.72)");
-  grad.addColorStop(0.55, "rgba(6,9,15,0.45)");
-  grad.addColorStop(1, "rgba(6,9,15,0.55)");
-  ctx.fillStyle = grad;
-  ctx.fillRect(0, 0, W, H);
+  // subtle grid
+  ctx.strokeStyle = "rgba(148,163,255,0.05)";
+  ctx.lineWidth = 1;
+  for (let gx = 0; gx <= W; gx += 32) { ctx.beginPath(); ctx.moveTo(gx, 0); ctx.lineTo(gx, H); ctx.stroke(); }
+  for (let gy = 0; gy <= H; gy += 32) { ctx.beginPath(); ctx.moveTo(0, gy); ctx.lineTo(W, gy); ctx.stroke(); }
+  // glows: brand violet top-right, PnL tint bottom-left
+  const glow = (x: number, y: number, r: number, rgb: string, a: number) => {
+    const g = ctx.createRadialGradient(x, y, 0, x, y, r);
+    g.addColorStop(0, `rgba(${rgb},${a})`);
+    g.addColorStop(1, `rgba(${rgb},0)`);
+    ctx.fillStyle = g;
+    ctx.fillRect(0, 0, W, H);
+  };
+  glow(860, 60, 420, "139,92,246", 0.22);
+  glow(180, 420, 380, tint, 0.2);
+  // soft accent shapes: tilted rings
+  ctx.save();
+  ctx.translate(800, 470);
+  ctx.rotate(-0.35);
+  for (const [r, a] of [[180, 0.08], [240, 0.05], [300, 0.03]] as const) {
+    ctx.strokeStyle = `rgba(${tint},${a})`;
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.ellipse(0, 0, r, r * 0.42, 0, 0, Math.PI * 2);
+    ctx.stroke();
+  }
+  ctx.restore();
 
   // header
   thin(ctx, 22);
   ctx.fillStyle = TEXT;
-  ctx.fillText("PENGOCOK LP — DLMM", 56, 58);
+  ctx.fillText("DLMM BOSKU", 56, 58);
   thin(ctx, 14);
   ctx.fillStyle = ACCENT;
-  ctx.fillText("manual liquidity · meteora", 56, 80);
+  ctx.fillText("meteora dlmm · manual LP", 56, 80);
   ctx.fillRect(56, 93, 64, 3);
   ctx.fillStyle = "rgba(255,255,255,0.12)";
   ctx.fillRect(120, 94, 300, 1);
   pill(ctx, d.exitLabel || (d.closed ? "MANUAL EXIT" : "OPEN"), W - 40, 40, "rgba(230,235,245,0.9)", 14);
 
   // left
-  const pnlColor = d.pnlUsd == null ? MUTED : d.pnlUsd >= 0 ? ACCENT : RED;
+  const pnlColor = d.pnlUsd == null ? MUTED : d.pnlUsd >= 0 ? UP : DOWN;
   const label = (t: string, y: number) => { thin(ctx, 13); ctx.fillStyle = MUTED; ctx.fillText(t, 56, y); };
   label("DURASI", 150);
   thin(ctx, 28); ctx.fillStyle = TEXT; ctx.fillText((d.duration ?? "n/a").toUpperCase(), 56, 186);
   label("PAIR", 232);
   thin(ctx, 42); ctx.fillStyle = TEXT; ctx.fillText(d.pair.replace("/", "-").slice(0, 16), 56, 276);
-  label(`PROFIT (USD)${d.source && d.source !== "Meteora" ? " · estimasi" : ""}`, 324);
+  label(`${d.pnlUsd != null && d.pnlUsd < 0 ? "LOSS" : "PROFIT"} (USD)${d.source && d.source !== "Meteora" ? " · estimasi" : ""}`, 324);
   thin(ctx, 64); ctx.fillStyle = pnlColor; ctx.fillText(money(d.pnlUsd, true), 56, 392);
 
   drawPanelChart(ctx, d, 560, 128, 416, 256);
@@ -287,9 +317,9 @@ export function renderPnlCard(d: PnlCardData): Buffer {
     ["STRATEGI", d.strategy || "n/a", TEXT],
     ["MODAL", d.modal || money(d.depositUsd), TEXT],
     ["BINS", d.bins != null ? String(d.bins) : "n/a", TEXT],
-    ["FEES", money(d.feesUsd), d.feesUsd != null && d.feesUsd > 0 ? ACCENT : TEXT],
+    ["FEES", money(d.feesUsd), d.feesUsd != null && d.feesUsd > 0 ? UP : TEXT],
     [d.closed ? "NILAI EXIT" : "NILAI", money(d.exitUsd), TEXT],
-    ["PNL", pct, d.pnlPct == null ? MUTED : d.pnlPct >= 0 ? ACCENT : RED],
+    ["PNL", pct, d.pnlPct == null ? MUTED : d.pnlPct >= 0 ? UP : DOWN],
   ];
   const colW = (W - 112) / cols.length;
   cols.forEach(([k, v, col], i) => {
@@ -305,5 +335,7 @@ export function renderPnlCard(d: PnlCardData): Buffer {
   ctx.textAlign = "right";
   ctx.fillText(d.timeLabel, W - 56, 556);
   ctx.textAlign = "left";
+  ctx.fillStyle = ACCENT;
+  ctx.fillText("@dlmmbosku_bot", 56, 556);
   return c.toBuffer("image/png");
 }
