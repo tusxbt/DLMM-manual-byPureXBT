@@ -150,7 +150,7 @@ export async function showPositionCards(ctx: Context): Promise<void> {
     await ctx.api.editMessageText(
       ctx.chat!.id,
       loading.message_id,
-      `📊 ${cards.length} posisi DLMM:${isAutoConfirm() ? `\n${AUTO_BADGE} — tombol aksi langsung eksekusi` : ""}`,
+      `📊 ${cards.length} posisi DLMM:${isAutoConfirm() ? `\n${AUTO_BADGE} — 🚪 Exit & ⚡ → SOL tanpa Confirm` : ""}`,
     );
     for (let i = 0; i < cards.length; i++) {
       await ctx.reply(renderPositionCard(cards[i]), {

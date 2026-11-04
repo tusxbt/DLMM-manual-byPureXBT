@@ -92,7 +92,7 @@ export async function renderAddPanel(ctx: Context, note?: string): Promise<void>
     liqSlippagePct: getLiqSlippagePct(),
     maxPositionUsd: cfg.maxPositionUsd,
     dryRun: cfg.dryRun,
-    note: [isAutoConfirm() ? `${AUTO_BADGE} — 👀 Preview langsung deploy` : null, note].filter(Boolean).join("\n") || undefined,
+    note,
   });
   s.data.panelMsgId = await upsert(
     ctx,
@@ -462,7 +462,9 @@ function settingsText(note?: string): string {
   const cfg = loadConfig({ requireTelegram: false, skipWallet: true });
   return [
     "⚙️ Settings",
-    st.autoConfirm ? `${AUTO_BADGE} — aksi langsung dieksekusi tanpa Confirm` : "🛡 Auto confirm OFF — setiap aksi butuh Confirm (60s)",
+    st.autoConfirm
+      ? `${AUTO_BADGE} — 🚪 Exit & ⚡ → SOL langsung dieksekusi; aksi lain tetap Confirm`
+      : "🛡 Auto confirm close OFF — semua aksi butuh Confirm (60s)",
     "",
     `🎚 SWAP slippage: ${getSwapSlippagePct()}% (Jupiter bps = ×100)`,
     `🎚 LIQ slippage: ${getLiqSlippagePct()}% (Meteora %)`,
@@ -482,7 +484,7 @@ function settingsText(note?: string): string {
 
 function settingsKb(): InlineKeyboard {
   return new InlineKeyboard()
-    .text(isAutoConfirm() ? "⚡ Auto confirm: ON" : "🛡 Auto confirm: OFF", "st:auto:toggle")
+    .text(isAutoConfirm() ? "⚡ Auto close: ON" : "🛡 Auto close: OFF", "st:auto:toggle")
     .row()
     .text("✏️ Priority fee", "st:edit:prio")
     .text("✏️ Jup max fee", "st:edit:jupmax")
@@ -533,25 +535,26 @@ export function registerSettingsPanel(bot: Bot): void {
     if (a === "toggle") {
       if (isAutoConfirm()) {
         setAutoConfirm(false);
-        return renderSettings(ctx, "Auto confirm OFF — Confirm/Cancel aktif lagi.");
+        return renderSettings(ctx, "Auto confirm close OFF — semua aksi butuh Confirm.");
       }
       const kb = new InlineKeyboard().text("⚡ Ya, aktifkan", "st:auto:on").text("❌ Batal", "st:back");
       s.data.settingsMsgId = await upsert(
         ctx,
         s.data.settingsMsgId,
         [
-          "⚠️ Aktifkan Auto confirm?",
+          "⚠️ Aktifkan Auto confirm close?",
           "",
-          "Deploy, swap, claim, exit, reshape, zapout akan LANGSUNG dikirim on-chain setelah Preview/tombol — tanpa tombol Confirm.",
-          "Tetap berlaku: whitelist, MAX_POSITION_USD, MAX_SWAP_USD (zapout dikecualikan), DRY_RUN, cek signer.",
-          "Salah tekan = transaksi terkirim. Pakai hanya dengan wallet terpisah dana kecil.",
+          "Hanya aksi CLOSE yang langsung dikirim on-chain tanpa Confirm: 🚪 Exit (remove+close) dan ⚡ → SOL (zapout), termasuk langkah Exit di ♻️ Reposition.",
+          "Deploy/Preview, swap, claim, flip/reshape, dan re-add Reposition TETAP butuh Confirm.",
+          "Tetap berlaku: whitelist, DRY_RUN, cek signer (zapout tetap dikecualikan dari MAX_SWAP_USD, hanya peringatan).",
+          "Salah tekan Exit/⚡ = posisi langsung ditutup. Pakai hanya dengan wallet terpisah dana kecil.",
         ].join("\n"),
         kb,
       );
       return;
     }
     setAutoConfirm(a === "on");
-    await renderSettings(ctx, a === "on" ? `${AUTO_BADGE}.` : "Auto confirm OFF.");
+    await renderSettings(ctx, a === "on" ? `${AUTO_BADGE} (hanya Exit & ⚡ → SOL).` : "Auto confirm close OFF.");
   });
 
   bot.callbackQuery("st:back", async (ctx) => {

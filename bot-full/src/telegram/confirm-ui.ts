@@ -25,7 +25,14 @@ export function setAutoConfirm(on: boolean): void {
   saveSettings(s);
 }
 
-export const AUTO_BADGE = "⚡ Auto confirm ON";
+export const AUTO_BADGE = "⚡ Auto confirm close ON";
+
+/** Only closing actions may skip Confirm. Everything else always prompts. */
+export const AUTO_CONFIRM_PURPOSES: ReadonlyArray<ConfirmRequest["purpose"]> = ["remove", "zapout"];
+
+export function canAutoConfirm(purpose: ConfirmRequest["purpose"]): boolean {
+  return isAutoConfirm() && AUTO_CONFIRM_PURPOSES.includes(purpose);
+}
 
 export async function presentConfirm(
   ctx: Context,
@@ -35,7 +42,7 @@ export async function presentConfirm(
 ): Promise<"prompted" | "auto"> {
   if (isAutoConfirm() && runner) {
     const req = takeAwaiting(confirmId);
-    if (req && req.status === "awaiting") {
+    if (req && req.status === "awaiting" && canAutoConfirm(req.purpose)) {
       await ctx.reply(`${text}\n\n${AUTO_BADGE} — langsung dieksekusi.`, { link_preview_options: { is_disabled: true } });
       await runner(ctx, req);
       return "auto";

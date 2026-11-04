@@ -80,13 +80,23 @@ test("presentConfirm: OFF shows buttons; ON runs immediately once", async () => 
   assert.equal(runs, 0);
 
   setAutoConfirm(true);
-  const r2 = createConfirm({ purpose: "claim", summary: "x", payload: {} });
-  assert.equal(await presentConfirm(ctx, "S2", r2.id), "auto");
+  // non-close actions ALWAYS prompt even when ON
+  for (const purpose of ["add", "swap", "claim", "reshape"] as const) {
+    const r = createConfirm({ purpose, summary: "x", payload: {} });
+    assert.equal(await presentConfirm(ctx, "P", r.id), "prompted", purpose);
+    assert.equal(replies.at(-1)!.kb, true);
+  }
+  assert.equal(runs, 0);
+  const rz = createConfirm({ purpose: "zapout", summary: "x", payload: {} });
+  assert.equal(await presentConfirm(ctx, "Z", rz.id), "auto");
   assert.equal(runs, 1);
-  assert.match(replies.at(-1)!.text, /Auto confirm ON/);
+  const r2 = createConfirm({ purpose: "remove", summary: "x", payload: { reposition: { bins: 40 } } });
+  assert.equal(await presentConfirm(ctx, "S2", r2.id), "auto");
+  assert.equal(runs, 2);
+  assert.match(replies.at(-1)!.text, /Auto confirm close ON/);
   assert.equal(getConfirm(r2.id)?.status, "executed");
   // already processed request is not re-run → falls back to prompt (stale button)
   await presentConfirm(ctx, "S2", r2.id);
-  assert.equal(runs, 1);
+  assert.equal(runs, 2);
   setAutoConfirm(false);
 });
