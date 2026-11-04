@@ -22,7 +22,16 @@ export type MeteoraPnl = {
   /** open: current balance (X+Y) USD, excl. unclaimed fees */
   balanceUsd: number | null;
   unclaimedFeesUsd: number | null;
+  /** open time if datapi provides it (ISO) — used for positions opened outside the bot */
+  openedAt?: string | null;
 };
+
+export function parseTime(v: unknown): string | null {
+  if (v == null || v === "") return null;
+  const n = Number(v);
+  const ms = Number.isFinite(n) ? (n < 1e12 ? n * 1000 : n) : Date.parse(String(v));
+  return Number.isFinite(ms) && ms > 1.4e12 ? new Date(ms).toISOString() : null;
+}
 
 const num = (v: unknown): number | null => {
   if (v == null || v === "") return null;
@@ -55,6 +64,7 @@ export function parsePnlPosition(p: any): MeteoraPnl {
     feeY: tok(p.allTimeFees?.tokenY),
     balanceUsd: u ? num(u.balances) : null,
     unclaimedFeesUsd: unclaimed,
+    openedAt: parseTime(p.createdAt ?? p.openedAt ?? p.created_at ?? p.openTime),
   };
 }
 

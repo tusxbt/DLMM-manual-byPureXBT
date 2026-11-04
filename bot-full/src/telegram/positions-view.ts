@@ -16,7 +16,7 @@ import { fmtUsd, shortAddr, strategyLabel } from "../format.js";
 import { redactSecrets } from "../logger.js";
 import { getSession } from "./session.js";
 import { confirmKeyboard, mainMenuKeyboard } from "./menus.js";
-import { loadTrackedPositions } from "../store/positions.js";
+import { loadTrackedPositions, type TrackedPosition } from "../store/positions.js";
 import { listLivePositions, searchPools, type LivePosition } from "../engine/dlmm-read.js";
 import { createConfirm } from "../engine/confirm.js";
 import { onReshapePos } from "./reshape-handlers.js";
@@ -66,7 +66,7 @@ export function kstTime(d = new Date()): string {
   return d.toLocaleTimeString("en-GB", { timeZone: "Asia/Seoul", hour12: false });
 }
 
-export type PositionCard = LivePosition & { pair?: string; pool_name?: string; entry_price?: number; opened_at?: string; cost_usd?: number; strategy_text?: string; partial?: boolean; meteora?: MeteoraPnl | null; mc_min?: number | null; mc_max?: number | null; mc_now?: number | null };
+export type PositionCard = LivePosition & { pair?: string; pool_name?: string; entry_price?: number; opened_at?: string; cost_usd?: number; strategy_text?: string; partial?: boolean; manual?: boolean; meteora?: MeteoraPnl | null; mc_min?: number | null; mc_max?: number | null; mc_now?: number | null };
 
 export function renderPositionCard(p: PositionCard, now = new Date()): string {
   const pair = p.pair || "TOKEN/SOL";
@@ -74,7 +74,7 @@ export function renderPositionCard(p: PositionCard, now = new Date()): string {
   const pu = m ? m.pnlUsd : p.pnl_usd;
   const pp = m ? m.pnlPct : p.pnl_pct;
   const bins = p.min_bin != null && p.max_bin != null ? p.max_bin - p.min_bin + 1 : null;
-  const tag = [p.strategy_text, bins != null ? `${bins} bins` : null].filter(Boolean).join(" · ");
+  const tag = [p.manual ? "manual" : p.strategy_text, bins != null ? `${bins} bins` : null].filter(Boolean).join(" · ");
   const pnl =
     pu == null
       ? "📈 PnL n/a"
@@ -133,7 +133,47 @@ async function pairName(pool: string, trackedName?: string): Promise<string> {
   }
 }
 
-async function loadCards(): Promise<PositionCard[]> {
+/** Per-wallet short cache: all on-chain DLMM positions (bot-opened or manual on meteora.ag). */
+const CARDS_TTL_MS = 15_000;
+const cardsCache = new Map<string, { at: number; cards: PositionCard[] }>();
+export function clearCardsCache(): void {
+  cardsCache.clear();
+}
+
+async function loadCards(opts: { fresh?: boolean } = {}): Promise<PositionCard[]> {
+  const w = loadConfig({ requireTelegram: false, skipWallet: true }).walletPublicKey.toBase58();
+  const hit = cardsCache.get(w);
+  if (!opts.fresh && hit && Date.now() - hit.at < CARDS_TTL_MS) return hit.cards;
+  const cards = await loadCardsUncached();
+  cardsCache.set(w, { at: Date.now(), cards });
+  return cards;
+}
+
+/** Merge on-chain positions (source of truth, per user wallet) with bot metadata; deduped by address. */
+export function mergeCards(live: LivePosition[], tracked: TrackedPosition[], met: Map<string, MeteoraPnl>): Array<Partial<PositionCard> & LivePosition> {
+  const seen = new Set<string>();
+  const out: Array<Partial<PositionCard> & LivePosition> = [];
+  for (const p of live) {
+    if (seen.has(p.position)) continue;
+    seen.add(p.position);
+    const t = tracked.find((x) => x.position === p.position);
+    const m = met.get(p.position) ?? null;
+    out.push({
+      ...p,
+      manual: !t,
+      pool_name: t?.pool_name,
+      opened_at: t?.opened_at ?? m?.openedAt ?? undefined,
+      cost_usd: t?.cost_usd,
+      strategy_text: t ? t.strategy_label || (t.strategy ? strategyLabel(t.strategy) : undefined) : undefined,
+      partial: !!t?.partial,
+      meteora: m,
+      entry_price: t?.entry_price,
+    });
+  }
+  return out;
+}
+
+async function loadCardsUncached(): Promise<PositionCard[]> {
   const tracked = loadTrackedPositions();
   const cost: Record<string, number> = {};
   for (const t of tracked) if (t.cost_usd) cost[t.position] = t.cost_usd;
@@ -157,22 +197,15 @@ async function loadCards(): Promise<PositionCard[]> {
   const supplies = new Map<string, number | null>();
   await Promise.all([...new Set(live.map((p) => p.mint_x).filter(Boolean) as string[])].map(async (m) => supplies.set(m, await getSupplyUi(m))));
   const out: PositionCard[] = [];
-  for (const p of live) {
-    const sup = p.mint_x ? supplies.get(p.mint_x) : null;
-    const qu = quoteUsd(p.mint_y);
-    const mc = { mc_min: marketCap(p.min_price, qu, sup), mc_max: marketCap(p.max_price, qu, sup), mc_now: marketCap(p.active_price, qu, sup) };
-    const t = tracked.find((x) => x.position === p.position);
+  for (const c of mergeCards(live, tracked, met)) {
+    const sup = c.mint_x ? supplies.get(c.mint_x) : null;
+    const qu = quoteUsd(c.mint_y);
     out.push({
-      ...p,
-      pool_name: t?.pool_name,
-      opened_at: t?.opened_at,
-      cost_usd: t?.cost_usd,
-      strategy_text: t ? t.strategy_label || (t.strategy ? strategyLabel(t.strategy) : undefined) : undefined,
-      partial: !!t?.partial,
-      meteora: met.get(p.position) ?? null,
-      ...mc,
-      entry_price: t?.entry_price,
-      pair: await pairName(p.pool, t?.pool_name || undefined),
+      ...c,
+      mc_min: marketCap(c.min_price, qu, sup),
+      mc_max: marketCap(c.max_price, qu, sup),
+      mc_now: marketCap(c.active_price, qu, sup),
+      pair: await pairName(c.pool, c.pool_name || undefined),
     } as PositionCard);
   }
   return out;
@@ -242,7 +275,7 @@ export async function showPositionCards(ctx: Context, opts: { refetch?: boolean;
     if (!cards || opts.refetch !== false) {
       if (!msgId) msgId = (await ctx.reply("⏳ Loading positions DLMM…")).message_id;
       else await editOrReply(ctx, msgId, "⏳ Loading positions DLMM…", new InlineKeyboard());
-      cards = await loadCards();
+      cards = await loadCards({ fresh: opts.refetch === true });
       s.data.posList = cards as unknown as Array<Record<string, unknown>>;
     }
     const r = renderPositionList(cards, opts.page ?? s.data.posPage ?? 0, isAutoConfirm());
@@ -361,7 +394,7 @@ type Resolved = { p: PositionCard; index: number };
  * survives bot restarts / session resets). Keeps session.posList in sync so index-based
  * zapout/reshape handlers work.
  */
-export async function resolvePosition(ctx: Context, addr: string, refetch = false, load: () => Promise<PositionCard[]> = loadCards): Promise<Resolved | null> {
+export async function resolvePosition(ctx: Context, addr: string, refetch = false, load: () => Promise<PositionCard[]> = () => loadCards({ fresh: refetch })): Promise<Resolved | null> {
   const s = getSession(key(ctx));
   let cards = s.data.posList as unknown as PositionCard[] | undefined;
   let index = !refetch && cards ? cards.findIndex((c) => c.position === addr) : -1;

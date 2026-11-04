@@ -24,7 +24,7 @@ import { buildAddLiquidityTxs, buildClaimFeeTxs, buildRemoveAndCloseTxs, binsFro
 import { getBalances } from "../engine/connection.js";
 import { getSolUsd } from "../engine/prices.js";
 import { createConfirm, takeAwaiting, markConfirm, cancelConfirm, renewConfirm, expiredAction } from "../engine/confirm.js";
-import { resolvePosition } from "./positions-view.js";
+import { resolvePosition, clearCardsCache } from "./positions-view.js";
 import { assertUsdCap, executePendingTxs } from "../engine/executor.js";
 import { listStrategies, requireStrategy } from "../strategies/index.js";
 import { getSwapQuote, buildSwapTx, uiAmountToAtomic, normalizeMint } from "../engine/jupiter-swap.js";
@@ -422,6 +422,7 @@ async function editOrSend(ctx: Context, msgId: number | undefined, text: string,
 async function executeConfirmed(ctx: Context, req: ConfirmRequest, statusMsgId?: number): Promise<void> {
   const id = req.id;
   markConfirm(id, "confirmed"); // prevents double execution (double tap / auto + tap)
+  clearCardsCache(); // positions change after any action
   if (req.purpose === "remove" || req.purpose === "zapout") return runClose(ctx, req, statusMsgId);
     let progMsg = statusMsgId ?? ctx.callbackQuery?.message?.message_id;
     try {
