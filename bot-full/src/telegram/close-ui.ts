@@ -11,13 +11,14 @@ import { code } from "./html.js";
 import { showPositionCards } from "./positions-view.js";
 import { buildPnlCardPng, type PositionSnapshot } from "./pnl-send.js";
 
-const details = new Map<string, { short: string; full: string; at: number }>();
+import { currentUser } from "../users/context.js";
+const details = new Map<string, { short: string; full: string; at: number; uid?: string }>();
 
 function remember(short: string, full: string): string {
   const now = Date.now();
   for (const [k, v] of details) if (now - v.at > 6 * 3600e3) details.delete(k);
   const id = crypto.randomBytes(5).toString("hex");
-  details.set(id, { short, full, at: now });
+  details.set(id, { short, full, at: now, uid: currentUser()?.userId });
   return id;
 }
 
@@ -124,7 +125,7 @@ export function registerCloseUi(bot: Bot): void {
   bot.callbackQuery(/^cl:(more|less):([a-f0-9]+)$/, async (ctx) => {
     await ctx.answerCallbackQuery();
     const d = details.get(ctx.match![2]);
-    if (!d) return;
+    if (!d || d.uid !== currentUser()?.userId) return;
     const more = ctx.match![1] === "more";
     const text = (more ? d.full : d.short).slice(0, 1000);
     const kb = closeKb(ctx.match![2], more);

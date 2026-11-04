@@ -32,16 +32,18 @@ export type Session = {
 };
 
 const sessions = new Map<string, Session>();
+import { currentUser } from "../users/context.js";
+const k = (chatId: string) => `${currentUser()?.userId ?? "-"}:${chatId}`;
 
 export function getSession(chatId: string): Session {
-  let s = sessions.get(chatId);
+  let s = sessions.get(k(chatId));
   if (!s) {
     s = { step: null, data: {}, awaitingText: null };
-    sessions.set(chatId, s);
+    sessions.set(k(chatId), s);
   }
   return s;
 }
 
 export function resetSession(chatId: string): void {
-  sessions.set(chatId, { step: null, data: {}, awaitingText: null });
+  sessions.set(k(chatId), { step: null, data: {}, awaitingText: null });
 }

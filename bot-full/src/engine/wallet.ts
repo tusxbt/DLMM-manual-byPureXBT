@@ -4,10 +4,14 @@
  */
 import { Keypair, PublicKey } from "@solana/web3.js";
 import bs58 from "bs58";
+import { scopedNonOwner } from "../users/context.js";
+import { loadUserWallet } from "../users/store.js";
 
 let _wallet: Keypair | null = null;
 
 export function getWallet(): Keypair {
+  const uid = scopedNonOwner();
+  if (uid) return loadUserWallet(uid); // per-user encrypted wallet; never falls back to owner's
   if (_wallet) return _wallet;
   const raw = process.env.WALLET_PRIVATE_KEY?.trim();
   if (!raw) {

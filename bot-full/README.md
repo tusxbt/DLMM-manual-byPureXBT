@@ -163,3 +163,38 @@ Tes mencakup redaksi key di logger, whitelist Telegram, caps USD, alur Confirm, 
 ## Referensi
 
 Perilaku on-chain mengacu pada `../DLMM-manual-byPureXBT/`. Desain awal: `../DESIGN.md`.
+
+## Multi-user (wallet per user)
+
+- **Owner** = `OWNER_TELEGRAM_ID` (or the first id in `ALLOWED_TELEGRAM_USER_IDS`). Owner uses `WALLET_PRIVATE_KEY` from `.env`.
+- Other users: owner adds them with **/admin → ➕ Tambah user** (send numeric Telegram ID). Stored in `DATA_DIR/users.json` (ids in `.env` whitelist still work too). The bot DMs them an onboarding message with **🆕 Buat wallet**; if the DM fails, ask them to open the bot and send `/start`.
+- Unknown users get `⛔ akses ditolak`.
+- Each user has their own wallet, positions, settings, session, confirms and PnL records (`DATA_DIR/users/<id>/`). Nobody can see or act on another user's wallet/positions. Caps and `DRY_RUN` from `.env` apply to everyone.
+- **The bot never asks for a private key / seed in chat.**
+
+### Setup (owner, once)
+```bash
+openssl rand -hex 32          # copy output
+nano .env                     # WALLET_ENCRYPTION_KEY=<output>   (optional OWNER_TELEGRAM_ID=<your id>)
+chmod 600 .env && npm run build && <restart bot>
+```
+
+### Import an existing wallet for a friend (via VPS file, not chat)
+1. Get the friend's Telegram user ID and add it: `/admin → ➕ Tambah user`.
+2. On the VPS put their key in a file named after their id:
+   ```bash
+   mkdir -p data/wallets/import && chmod 700 data/wallets data/wallets/import
+   nano data/wallets/import/<userId>.json    # Solana keypair JSON array [12,34,...] (64 numbers) OR base58 secret string
+   chmod 600 data/wallets/import/<userId>.json
+   ```
+   (`data` = your `DATA_DIR`.)
+3. In Telegram: `/admin → 📥 Import dari file VPS → <userId>`.
+4. The bot encrypts it into `data/wallets/<userId>.json` (chmod 600), verifies it decrypts, then overwrites + deletes the plaintext import file, and DMs the user their address. If the file is invalid it is left untouched.
+5. Clear shell history if you pasted the key in a command: `history -c`.
+
+### Backup (important)
+Back up **both** together, stored separately and offline:
+- `DATA_DIR/wallets/` (encrypted wallet files), and
+- `WALLET_ENCRYPTION_KEY` from `.env`.
+
+Without the key the wallet files are useless; with both, anyone can spend the funds. Removing a user in /admin only revokes access — their encrypted wallet file stays so funds remain recoverable (users can also 📤 Withdraw SOL from 👛 Wallet, with Confirm + `MAX_SWAP_USD` cap).

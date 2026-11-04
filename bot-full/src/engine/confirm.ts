@@ -4,8 +4,9 @@
 import crypto from "node:crypto";
 import { CONFIRM_TTL_MS } from "../config.js";
 import { log } from "../logger.js";
+import { currentUser } from "../users/context.js";
 
-export type ConfirmPurpose = "add" | "remove" | "claim" | "swap" | "reshape" | "zapout";
+export type ConfirmPurpose = "add" | "remove" | "claim" | "swap" | "reshape" | "zapout" | "withdraw";
 
 export type ConfirmRequest = {
   id: string;
@@ -17,6 +18,8 @@ export type ConfirmRequest = {
   payload: Record<string, unknown>;
   status: "awaiting" | "confirmed" | "cancelled" | "expired" | "executed" | "failed";
   resultMessage?: string;
+  /** Telegram user that created it; only that user can confirm/see it. */
+  userId?: string;
 };
 
 const store = new Map<string, ConfirmRequest>();
@@ -38,6 +41,7 @@ export function createConfirm(input: {
     expiresAt: now + (input.ttlMs ?? CONFIRM_TTL_MS),
     payload: input.payload,
     status: "awaiting",
+    userId: currentUser()?.userId,
   };
   store.set(id, req);
   log("confirm", `awaiting ${id} purpose=${input.purpose} ttl=${input.ttlMs ?? CONFIRM_TTL_MS}ms`);
@@ -48,6 +52,8 @@ export function getConfirm(id: string): ConfirmRequest | null {
   purge();
   const r = store.get(id) || null;
   if (!r) return null;
+  const me = currentUser()?.userId;
+  if (r.userId !== me) return null; // isolation: other users' confirms are invisible
   if (r.status === "awaiting" && r.expiresAt < Date.now()) {
     r.status = "expired";
   }
@@ -101,5 +107,5 @@ export function resetConfirmStoreForTests(): void {
 
 export function listAwaiting(): ConfirmRequest[] {
   purge();
-  return [...store.values()].filter((r) => r.status === "awaiting");
+  return [...store.values()].filter((r) => r.status === "awaiting" && r.userId === currentUser()?.userId);
 }

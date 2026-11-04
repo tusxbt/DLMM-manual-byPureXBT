@@ -7,7 +7,11 @@ import { installHtml, sigLine } from "./html.js";
 import { type PositionSnapshot } from "./pnl-send.js";
 import { setStatus, finishClose, closeTitle, registerCloseUi, type CloseOutcome } from "./close-ui.js";
 import { log, redactSecrets } from "../logger.js";
-import { isAuthorized } from "./auth.js";
+import { roleFor } from "./auth.js";
+import { runAsUser, currentUser } from "../users/context.js";
+import { hasWallet } from "../users/store.js";
+import { registerUsersUi, showWallet, allowedWithoutWallet, buildWithdrawTx, ONBOARD_TEXT, onboardKb } from "./users-ui.js";
+import { PublicKey } from "@solana/web3.js";
 import { getSession, resetSession } from "./session.js";
 import { mainMenuKeyboard, CANCEL_KB, confirmKeyboard } from "./menus.js";
 import { loadSettings } from "../store/settings.js";
@@ -61,14 +65,33 @@ export function createBot(): Bot {
 
   bot.use(async (ctx, next) => {
     if (!ctx.chat) return;
-    if (!isAuthorized(ctx)) {
-      log("auth", `ignored chat=${ctx.chat.id} from=${ctx.from?.id}`);
+    const role = roleFor(ctx);
+    if (!role) {
+      log("auth", `denied chat=${ctx.chat.id} from=${ctx.from?.id}`);
+      if (ctx.chat.type === "private") await ctx.reply("⛔ akses ditolak").catch(() => undefined);
+      if (ctx.callbackQuery) await ctx.answerCallbackQuery().catch(() => undefined);
       return;
     }
-    await next();
+    const uid = String(ctx.from!.id);
+    // every handler below runs scoped to this user: own wallet, data dir, session, confirms
+    await runAsUser({ userId: uid, isOwner: role === "owner" }, async () => {
+      if (role !== "owner" && !hasWallet(uid) && !allowedWithoutWallet(ctx)) {
+        if (ctx.callbackQuery) await ctx.answerCallbackQuery().catch(() => undefined);
+        await showWallet(ctx);
+        return;
+      }
+      await next();
+    });
   });
+  registerUsersUi(bot);
 
   const withBottomBar = async (ctx: Context) => {
+    const me = currentUser();
+    if (me && !me.isOwner && !hasWallet(me.userId)) {
+      await ctx.reply("⌨️ Menu bawah aktif.", { reply_markup: bottomKeyboard() });
+      await ctx.reply(ONBOARD_TEXT, { reply_markup: onboardKb() });
+      return;
+    }
     await ctx.reply("⌨️ Menu bawah aktif.", { reply_markup: bottomKeyboard() });
     await replyMenu(ctx);
   };
@@ -80,7 +103,7 @@ export function createBot(): Bot {
     await replyMenu(ctx);
   });
 
-  bot.command("balance", async (ctx) => showBalance(ctx));
+  bot.command("balance", async (ctx) => showWallet(ctx));
   bot.command("positions", async (ctx) => showPositionCards(ctx));
   bot.command("settings", async (ctx) => showSettings(ctx));
   bot.command("pools", async (ctx) => {
@@ -120,7 +143,7 @@ export function createBot(): Bot {
       swap: startSwap,
       reshape: startReshape,
       zapout: startZapout,
-      balance: showBalance,
+      balance: showWallet,
       settings: showSettings,
       pools: async (c) => {
         getSession(chatKey(c)).awaitingText = async (text) => doPools(c, text.trim());
@@ -269,7 +292,7 @@ export function createBot(): Bot {
       if (kbAction === "home") return replyMenu(ctx);
       if (kbAction === "positions") return showPositionCards(ctx);
       if (kbAction === "trade") return startSwap(ctx);
-      if (kbAction === "wallet") return showBalance(ctx);
+      if (kbAction === "wallet") return showWallet(ctx);
       return showSettings(ctx);
     }
     if (s.awaitingText) {
@@ -299,6 +322,7 @@ export function createBot(): Bot {
 const PURPOSE_LABEL: Record<string, string> = {
   add: "🚀 Deploy",
   remove: "🚪 Exit",
+  withdraw: "📤 Withdraw",
   claim: "💰 Claim",
   swap: "💱 Swap",
   reshape: "🔀 Flip",
@@ -496,6 +520,14 @@ async function runConfirmedAction(
     };
   }
 
+  if (purpose === "withdraw") {
+    const cfg = loadConfig({ requireTelegram: false });
+    assertUsdCap("swap", Number(payload.usd));
+    const item = await buildWithdrawTx(cfg.walletPublicKey, new PublicKey(String(payload.to)), Number(payload.lamports));
+    const r = await executePendingTxs([item]);
+    return { success: r.success, signatures: r.signatures, message: r.success ? "SOL terkirim." : r.message, error: r.error };
+  }
+
   return { success: false, error: `purpose tidak dikenal: ${purpose}` };
 }
 
@@ -568,35 +600,6 @@ async function startClaim(ctx: Context): Promise<void> {
 async function startRemove(ctx: Context): Promise<void> {
   await showPositions(ctx);
   await ctx.reply("Pilih tombol Remove di atas, lalu Confirm. (Auto-swap tidak aktif — pakai /swap setelah remove.)");
-}
-
-async function showBalance(ctx: Context): Promise<void> {
-  let solUsd = 0;
-  try {
-    solUsd = await getSolUsd();
-  } catch {
-    /* show amounts without USD */
-  }
-  const b = await getBalances(solUsd);
-  const cfg = loadConfig({ requireTelegram: false, skipWallet: true });
-  const u = (x: number) => (solUsd ? fmtUsd(x) : "n/a");
-  await ctx.reply(
-    [
-      "👛 **Wallet**",
-      `\`${b.wallet}\``,
-      "",
-      `◎ SOL    ${fmtNum(b.sol)}  ·  ${u(b.sol_usd)}`,
-      `💲 USDC  ${fmtNum(b.usdc)}  ·  ${fmtUsd(b.usdc_usd)}`,
-      `Σ Total  ${solUsd ? fmtUsd(b.total_usd) : "n/a"}`,
-      "",
-      `${cfg.dryRun ? "🧪 DRY_RUN" : "⚠️ LIVE"}  ·  cap posisi ${fmtUsd(cfg.maxPositionUsd)}  ·  swap ${fmtUsd(cfg.maxSwapUsd)}`,
-      `[🔗 Solscan](https://solscan.io/account/${b.wallet})`,
-      b.error ? `⚠️ ${b.error}` : null,
-    ]
-      .filter((x) => x !== null)
-      .join("\n"),
-    { reply_markup: mainMenuKeyboard() },
-  );
 }
 
 async function startSwap(ctx: Context): Promise<void> {

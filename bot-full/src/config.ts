@@ -3,6 +3,8 @@ import fs from "node:fs";
 import path from "node:path";
 import { PublicKey } from "@solana/web3.js";
 import { getWallet, getWalletPublicKey, resetWalletForTests } from "./engine/wallet.js";
+import { scopedNonOwner } from "./users/context.js";
+import { walletPubkeyOf } from "./users/store.js";
 
 export type AppConfig = {
   telegramToken: string;
@@ -75,6 +77,19 @@ function parseUsdCap(name: string, fallback: number): number {
 }
 
 export function loadConfig(opts?: { requireTelegram?: boolean; skipWallet?: boolean }): AppConfig {
+  const base = loadBaseConfig(opts);
+  const uid = scopedNonOwner();
+  if (!uid) return base;
+  // non-owner scope: own data dir + own wallet pubkey (system program placeholder if none yet)
+  const pk = walletPubkeyOf(uid);
+  return {
+    ...base,
+    dataDir: path.join(base.dataDir, "users", uid),
+    walletPublicKey: new PublicKey(pk || "11111111111111111111111111111111"),
+  };
+}
+
+function loadBaseConfig(opts?: { requireTelegram?: boolean; skipWallet?: boolean }): AppConfig {
   if (_config) return _config;
 
   const requireTelegram = opts?.requireTelegram !== false;
