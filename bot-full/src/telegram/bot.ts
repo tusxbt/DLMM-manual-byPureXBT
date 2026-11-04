@@ -28,6 +28,7 @@ import { getSolUsd, getUsdPrices } from "../engine/prices.js";
 import { createConfirm, takeAwaiting, markConfirm, cancelConfirm, renewConfirm, expiredAction } from "../engine/confirm.js";
 import { resolvePosition, clearCardsCache, showFlipPreview } from "./positions-view.js";
 import { executeFlip } from "../engine/flip.js";
+import { registerTpslUi } from "./tpsl-ui.js";
 import { assertUsdCap, executePendingTxs } from "../engine/executor.js";
 import { listStrategies, requireStrategy } from "../strategies/index.js";
 import { getSwapQuote, buildSwapTx, uiAmountToAtomic, normalizeMint } from "../engine/jupiter-swap.js";
@@ -232,6 +233,7 @@ export function createBot(): Bot {
 
   registerAddPanel(bot);
   registerPositionsView(bot);
+  registerTpslUi(bot);
   registerCloseUi(bot);
   registerSettingsPanel(bot);
   registerPnlBgUi(bot, cfg.telegramToken);

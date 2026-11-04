@@ -16,7 +16,9 @@ log(
   "WARNING: bot menandatangani dengan WALLET_PRIVATE_KEY dari .env — pakai wallet TERPISAH dana kecil saja",
 );
 
+import { startTpslMonitor } from "./telegram/tpsl-ui.js";
 const bot = createBot();
+startTpslMonitor(bot); // alerts only, never trades
 
 bot.api
   .setMyCommands(BOT_COMMANDS)

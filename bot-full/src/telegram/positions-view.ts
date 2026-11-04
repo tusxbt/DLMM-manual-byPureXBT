@@ -15,6 +15,7 @@ import { loadConfig, CONFIRM_TTL_MS } from "../config.js";
 import { fmtUsd, shortAddr, strategyLabel } from "../format.js";
 import { redactSecrets } from "../logger.js";
 import { code } from "./html.js";
+import { getTpsl, tpslLine } from "../store/tpsl.js";
 import { getSession } from "./session.js";
 import { confirmKeyboard, mainMenuKeyboard } from "./menus.js";
 import { loadTrackedPositions, type TrackedPosition } from "../store/positions.js";
@@ -108,6 +109,8 @@ export function renderPositionCard(p: PositionCard, now = new Date()): string {
   out.push(p.in_range == null ? "⚪ Range ?" : p.in_range ? "🟢 In-range" : "🔴 Out-of-range");
   out.push("");
   out.push(`🕐 ${fmtAge(p.opened_at, now.getTime()) ?? "n/a"} · updated ${kstTime(now)} KST`);
+  const tl = tpslLine(getTpsl(p.position));
+  if (tl) out.push(tl);
   out.push(`[Meteora](https://app.meteora.ag/dlmm/${p.pool}) · [Solscan](https://solscan.io/account/${p.position})`);
   out.push(`\`${p.position}\``);
   return out.filter((x): x is string => x !== null).join("\n");
@@ -122,10 +125,12 @@ export function positionKeyboard(addr: string): InlineKeyboard {
     .text("♻️ Reposition", `pv:repo:${addr}`)
     .row()
     .text("🔁 Reshape", `pv:rs:${addr}`)
-    .text("📈 Card", `pv:card:${addr}`)
+    .text("🎯 TP/SL", `tp:m:${addr}`)
     .row()
-    .text("← Positions", "pv:list")
-    .text("🔄 Refresh", `pv:ref:${addr}`);
+    .text("📈 Card", `pv:card:${addr}`)
+    .text("🔄 Refresh", `pv:ref:${addr}`)
+    .row()
+    .text("← Positions", "pv:list");
 }
 
 const pairCache = new Map<string, string>();
@@ -149,7 +154,7 @@ export function clearCardsCache(): void {
   cardsCache.clear();
 }
 
-async function loadCards(opts: { fresh?: boolean } = {}): Promise<PositionCard[]> {
+export async function loadCards(opts: { fresh?: boolean } = {}): Promise<PositionCard[]> {
   const w = loadConfig({ requireTelegram: false, skipWallet: true }).walletPublicKey.toBase58();
   const hit = cardsCache.get(w);
   if (!opts.fresh && hit && Date.now() - hit.at < CARDS_TTL_MS) return hit.cards;
