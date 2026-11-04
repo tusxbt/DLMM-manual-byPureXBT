@@ -315,7 +315,7 @@ export function panelMissing(p: AddPanelState): string[] {
 
 export function renderPanelText(
   p: AddPanelState,
-  opts: { liqSlippagePct: number; maxPositionUsd: number; dryRun: boolean; note?: string },
+  opts: { liqSlippagePct: number; dryRun: boolean; note?: string },
 ): string {
   const pool = p.pool;
   const strat = getStrategy(p.strategyId);

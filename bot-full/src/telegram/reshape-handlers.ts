@@ -7,7 +7,6 @@ import { mainMenuKeyboard, CANCEL_KB, confirmKeyboard } from "./menus.js";
 import { loadTrackedPositions } from "../store/positions.js";
 import { listLivePositions } from "../engine/dlmm-read.js";
 import { createConfirm } from "../engine/confirm.js";
-import { assertUsdCap } from "../engine/executor.js";
 import { listStrategies, requireStrategy } from "../strategies/index.js";
 import {
   analyzeReshape,
@@ -148,12 +147,6 @@ async function finalizeReshapeConfirm(ctx: Context, width: number): Promise<void
   const strategyId = s.data.reshapeStrategyId || "bid_ask";
   if (!analysis) {
     await ctx.reply("Sesi kadaluarsa — /reshape lagi.");
-    return;
-  }
-  try {
-    assertUsdCap("position", analysis.estimatedReaddUsd);
-  } catch (e) {
-    await ctx.reply(`❌ ${(e as Error).message}`, { reply_markup: mainMenuKeyboard() });
     return;
   }
 

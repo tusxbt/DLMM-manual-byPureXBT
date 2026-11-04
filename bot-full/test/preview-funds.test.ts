@@ -6,7 +6,7 @@ import { checkFunds } from "../src/engine/funds-check.js";
 const base = {
   pool: "Impeach/SOL", side: "SOL side", strategy: "Bid-Ask", amount: "1 SOL", bins: 40, below: 40, above: 0,
   downPct: 54.7, upPct: 0, minPrice: 0.00000151, maxPrice: 0.00000334, solUsd: 96.93, mcMin: 139000, mcMax: 307000, mcNow: 307000,
-  costUsd: 96.93, capUsd: 500, slippagePct: 10, position: "Pos111", dryRun: false, ttlSec: 60,
+  costUsd: 96.93, slippagePct: 10, position: "Pos111", dryRun: false, ttlSec: 60,
 };
 
 test("compact preview ≤ 10 lines, no bin-array warning when 0", () => {
@@ -32,6 +32,6 @@ test("bin array warning + funds block", () => {
   assert.ok(checkFunds({ haveSol: 2, amountSol: 1, positionRentSol: 0.057, binArrayRentSol: 0.14 }).ok);
 });
 
-test("cap line only near cap", () => {
-  assert.match(renderAddPreview({ ...base, costUsd: 450 }), /cap \$500/);
+test("no USD position cap anywhere in preview", () => {
+  assert.doesNotMatch(renderAddPreview({ ...base, costUsd: 1_000_000 }), /cap/i);
 });

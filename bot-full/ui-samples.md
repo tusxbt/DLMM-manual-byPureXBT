@@ -84,7 +84,7 @@ Fee: $1.24
 In range: 1/2
 
 Pilih posisi ⬇️
-🕐 01:04:14 KST
+🕐 01:28:41 KST
 ```
 
 ## Close / Zapout result (+ ℹ️ Detail button)
@@ -126,7 +126,6 @@ Total: $132.25
 
 **🔒 Batas**
 Mode: ⚠️ LIVE
-Cap posisi: $100.00
 Cap swap: $100.00
 ```
 
@@ -172,6 +171,5 @@ Mix: BidAsk 70 / Spot 30
 
 **🔒 Dari .env**
 Mode: ⚠️ LIVE
-Cap posisi: $100.00
 Cap swap: $100.00
 ```

@@ -16,7 +16,6 @@ export type AppConfig = {
   jupiterApiKey: string | null;
   dataDir: string;
   dryRun: boolean;
-  maxPositionUsd: number;
   maxSwapUsd: number;
   tokens: { sol: string; usdc: string };
 };
@@ -148,7 +147,6 @@ function loadBaseConfig(opts?: { requireTelegram?: boolean; skipWallet?: boolean
     jupiterApiKey: process.env.JUPITER_API_KEY?.trim() || null,
     dataDir: process.env.DATA_DIR?.trim() || "./data",
     dryRun,
-    maxPositionUsd: parseUsdCap("MAX_POSITION_USD", 100),
     maxSwapUsd: parseUsdCap("MAX_SWAP_USD", 100),
     tokens: {
       sol: "So11111111111111111111111111111111111111112",

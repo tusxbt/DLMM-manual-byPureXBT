@@ -7,7 +7,7 @@ Bot self-host untuk deploy / claim / remove / swap posisi [Meteora DLMM](https:/
 > Bot ini **menandatangani transaksi sendiri** memakai `WALLET_PRIVATE_KEY` dari file `.env`.
 >
 > 1. **Buat wallet Solana BARU yang terpisah** — jangan pakai wallet utama.
-> 2. Isi **dana kecil saja** (sesuai `MAX_POSITION_USD` / `MAX_SWAP_USD`, default $100).
+> 2. Isi **dana kecil saja** (swap dibatasi `MAX_SWAP_USD`, default $100; ukuran posisi tanpa batas USD — hanya cek saldo SOL).
 > 3. **Jangan pernah** kirim private key / seed phrase lewat chat Telegram, email, atau commit git.
 > 4. Isi key **sendiri** di file `.env` di server lokalmu, lalu:
 >    ```bash
@@ -36,7 +36,7 @@ Kalau kamu tidak nyaman menyimpan private key di server, pakai `bot-safe/` (tand
 
 Setiap deploy / swap / claim / remove menampilkan ringkasan + tombol **Confirm / Cancel** (timeout **60 detik**). Tidak ada trade otomatis / terjadwal.
 
-**Batas keras:** `MAX_POSITION_USD=100`, `MAX_SWAP_USD=100` (bisa diubah di `.env`).
+**Batas keras:** `MAX_SWAP_USD=100` (bisa diubah di `.env`). Ukuran posisi tidak dibatasi USD; sebelum Preview bot cek saldo SOL cukup (amount + rent + bin array + fee).
 
 
 
@@ -73,7 +73,7 @@ Alur untuk posisi one-sided SOL yang sebagian bin sudah jadi token (non-SOL):
 2. **Claim** swap fee (`claimSwapFee`). Fee token ikut dihitung; fee SOL tetap di wallet (tidak di-re-add). Jika fee ≈ 0, langkah claim di-skip.
 3. **Withdraw hanya bin yang memegang token** (`removeLiquidity` 100% bps per rentang kontigu). Bin SOL-only **tidak** disentuh. Bin campuran (token+SOL) ikut di-withdraw — bagian SOL kembali ke wallet.
 4. **Re-add** jumlah aktual = delta saldo token wallet setelah claim+withdraw (bukan estimasi) sebagai posisi **baru**, single-sided token, strategi default **BidAsk** (bisa dipilih), range **di atas** active bin. Lebar default = jumlah bin token yang di-withdraw (max 69, bisa diubah).
-5. Satu ringkasan + tombol **Confirm/Cancel** (60 detik) sebelum eksekusi. Tx dijalankan berurutan; setiap signature dilaporkan. Cap `MAX_POSITION_USD` dicek pada nilai re-add. `DRY_RUN=true` mensimulasikan semua langkah.
+5. Satu ringkasan + tombol **Confirm/Cancel** (60 detik) sebelum eksekusi. Tx dijalankan berurutan; setiap signature dilaporkan. `DRY_RUN=true` mensimulasikan semua langkah.
 
 **Edge case:** tidak ada bin token → bot menolak dengan pesan jelas. Gagal di tengah → laporan langkah mana yang sudah sukses (claim/withdraw/re-add).
 
@@ -109,7 +109,7 @@ nano .env   # isi sendiri — jangan paste key ke chat
 | `WALLET_PRIVATE_KEY` | ✅ | base58 secret — **wallet terpisah dana kecil** |
 | `RPC_URL` | ✅ | RPC mainnet (Helius dll) |
 | `DRY_RUN` | | default `true` |
-| `MAX_POSITION_USD` / `MAX_SWAP_USD` | | default `100` |
+| `MAX_SWAP_USD` | | default `100` (batas swap; posisi tanpa cap USD) |
 | `HELIUS_API_KEY` / `JUPITER_API_KEY` | | opsional |
 
 ### BotFather
@@ -210,7 +210,7 @@ Without the key the wallet files are useless; with both, anyone can spend the fu
 - Preview menampilkan jumlah tx, rent posisi (kembali saat close) dan rent bin array baru (TIDAK kembali).
 - Jika deploy berhenti di tengah: pesan gagal punya tombol **▶️ Retry / lanjutkan** (kirim sisa chunk, distribusi dihitung ulang dari harga sekarang) dan **🚪 Exit**.
 - Exit/Zapout/Claim/Reshape posisi lebar dikirim multi-tx berurutan dengan retry blockhash; status menampilkan progres `n/N tx`.
-- `MAX_POSITION_USD` tetap berlaku.
+- Tidak ada cap USD posisi; saldo SOL dicek sebelum Preview.
 
 ## Strategi Mix
 

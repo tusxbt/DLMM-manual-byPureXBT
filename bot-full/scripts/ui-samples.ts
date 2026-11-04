@@ -6,7 +6,6 @@ process.env.DATA_DIR = fs.mkdtempSync(path.join(os.tmpdir(), "uis-"));
 process.env.ALLOWED_TELEGRAM_USER_IDS = "111";
 process.env.WALLET_ENCRYPTION_KEY = "a".repeat(64);
 process.env.DRY_RUN = "false";
-process.env.MAX_POSITION_USD = "100";
 process.env.MAX_SWAP_USD = "100";
 async function main() {
   const out = process.argv[2] || "ui-samples.md";
@@ -28,16 +27,16 @@ async function main() {
   const preview = renderAddPreview({
     pool: "Donkey-SOL", side: "SOL side", strategy: "Mix 70/30", amount: "0.5 SOL", mix: { pct: 70, primaryText: "0.35 SOL", spotText: "0.15 SOL" },
     bins: 70, below: 70, above: 0, downPct: 50.2, upPct: 0, minPrice: 0.00000206, maxPrice: 0.00000414, solUsd: 97,
-    mcMin: 2_060_000, mcMax: 4_140_000, mcNow: 4_140_000, costUsd: 48.5, capUsd: 100, slippagePct: 10,
+    mcMin: 2_060_000, mcMax: 4_140_000, mcNow: 4_140_000, costUsd: 48.5, slippagePct: 10,
     wide: { txCount: 3, positionRentSol: 0.0582, binArrayRentSol: 0.1424, binArraysCount: 2 }, position: card.position, dryRun: false, ttlSec: 60,
   });
   const list = renderPositionList([card as never, { ...card, pair: "BONK/SOL", in_range: false, meteora: null } as never], 0).text;
   const close = compactResult({ kind: "zapout", pair: "Donkey/SOL", success: true, signatures: ["a", "5xTxSig"], ms: 3012, solReceived: 0.5509, snapshot: { pool: "p", position: "q", total_value_usd: null, unclaimed_fees_usd: null, meteora: { ...met, closed: true } } });
   const closeErr = compactResult({ kind: "remove", pair: "AMD/SOL", success: false, signatures: [], ms: 1, error: "block height exceeded" });
-  const wallet = walletText({ wallet: "9xQeWvG816bUx9EPjHmaT23yvVM2ZWbrrpZb9PusVFin", sol: 1.2345, solUsd: 119.75, usdc: 12.5, totalUsd: 132.25, owner: true, dryRun: false, capPos: 100, capSwap: 100 });
+  const wallet = walletText({ wallet: "9xQeWvG816bUx9EPjHmaT23yvVM2ZWbrrpZb9PusVFin", sol: 1.2345, solUsd: 119.75, usdc: 12.5, totalUsd: 132.25, owner: true, dryRun: false, capSwap: 100 });
   const { poolBlock } = await import("../src/telegram/pool-format.js");
   const { renderPanelText, defaultPanel } = await import("../src/telegram/add-panel.js");
-  const panel = renderPanelText({ ...defaultPanel({ pool: "5rCf1DM8LjKTw4YqhnoLcngyZYeNnQqztScTogYHAS6", name: "Donkey-SOL", bin_step: 100, fee_pct: 1, tvl: 182_000, fees_24h: 9_400, fees_total: 211_000, fee_tvl_24h_pct: 5.16, token_x: { symbol: "Donkey", mint: "M" } } as never), activePrice: 0.00000414, solUsd: 97, solBalance: 2.1, tokenBalance: 0, amountSol: 0.5, supply: 1_000_000_000 } as never, { liqSlippagePct: 10, maxPositionUsd: 100, dryRun: false });
+  const panel = renderPanelText({ ...defaultPanel({ pool: "5rCf1DM8LjKTw4YqhnoLcngyZYeNnQqztScTogYHAS6", name: "Donkey-SOL", bin_step: 100, fee_pct: 1, tvl: 182_000, fees_24h: 9_400, fees_total: 211_000, fee_tvl_24h_pct: 5.16, token_x: { symbol: "Donkey", mint: "M" } } as never), activePrice: 0.00000414, solUsd: 97, solBalance: 2.1, tokenBalance: 0, amountSol: 0.5, supply: 1_000_000_000 } as never, { liqSlippagePct: 10, dryRun: false });
   const pools = [
     { name: "SOL-USDC", tvl: 4_470_000, volume_24h: 32_300_000, fees_24h: 13_800, fees_total: 11_700_000, fee_tvl_24h_pct: 0.31, bin_step: 4, fee_pct: 0.04 },
     { name: "Donkey-SOL", tvl: 182_000, volume_24h: 940_000, fees_24h: 9_400, fees_total: 211_000, fee_tvl_24h_pct: 5.16, bin_step: 100, fee_pct: 1 },

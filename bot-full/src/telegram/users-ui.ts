@@ -51,7 +51,7 @@ export async function showWallet(ctx: Context): Promise<void> {
   const kb = new InlineKeyboard().text("🔄 Refresh", "w:show").text("📤 Withdraw SOL", "w:wd");
   if (isOwner()) kb.row().text("🛡 Admin", "adm:home");
   await ctx.reply(
-    walletText({ wallet: b.wallet, sol: b.sol, solUsd: solUsd ? b.sol_usd : null, usdc: b.usdc, totalUsd: solUsd ? b.total_usd : null, owner: isOwner(), dryRun: cfg.dryRun, capPos: cfg.maxPositionUsd, capSwap: cfg.maxSwapUsd, error: b.error }),
+    walletText({ wallet: b.wallet, sol: b.sol, solUsd: solUsd ? b.sol_usd : null, usdc: b.usdc, totalUsd: solUsd ? b.total_usd : null, owner: isOwner(), dryRun: cfg.dryRun, capSwap: cfg.maxSwapUsd, error: b.error }),
     { reply_markup: kb },
   );
 }
@@ -69,7 +69,7 @@ export const onboardKb = () => new InlineKeyboard().text("🆕 Buat wallet", "w:
 
 export function walletText(w: {
   wallet: string; sol: number; solUsd: number | null; usdc: number; totalUsd: number | null;
-  owner: boolean; dryRun: boolean; capPos: number; capSwap: number; error?: string;
+  owner: boolean; dryRun: boolean; capSwap: number; error?: string;
 }): string {
   return screen(
     `👛 Wallet${w.owner ? " · owner" : ""}`,
@@ -79,7 +79,7 @@ export function walletText(w: {
       kv("USDC", fmtNum(w.usdc)),
       kv("Total", w.totalUsd == null ? "n/a" : fmtUsd(w.totalUsd)),
     ]),
-    section("🔒 Batas", [kv("Mode", w.dryRun ? "🧪 DRY_RUN" : "⚠️ LIVE"), kv("Cap posisi", fmtUsd(w.capPos)), kv("Cap swap", fmtUsd(w.capSwap))]),
+    section("🔒 Batas", [kv("Mode", w.dryRun ? "🧪 DRY_RUN" : "⚠️ LIVE"), kv("Cap swap", fmtUsd(w.capSwap))]),
     w.error ? `⚠️ ${w.error}` : null,
   );
 }

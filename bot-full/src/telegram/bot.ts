@@ -462,7 +462,6 @@ async function runConfirmedAction(
     const txs = payload.txs as PendingTxItem[];
     const meta = (payload.meta || {}) as Record<string, unknown>;
     const costUsd = Number(payload.cost_usd || 0);
-    assertUsdCap("position", costUsd);
     const result = await executePendingTxs(txs, [], { onProgress: hooks.onProgress });
     const posAddr = String(meta.position);
     const prev = meta.resume ? getTrackedPosition(posAddr) : undefined;
@@ -559,7 +558,6 @@ async function runConfirmedAction(
   }
 
   if (purpose === "reshape") {
-    assertUsdCap("position", Number(payload.estimated_usd || 0));
     const result = await executeReshape({
       poolAddress: String(payload.pool),
       positionAddress: String(payload.position),

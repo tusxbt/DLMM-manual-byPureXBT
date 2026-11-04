@@ -44,7 +44,6 @@ test("whitelist: only ALLOWED_TELEGRAM_USER_IDS authorized", async () => {
   process.env.RPC_URL = "https://api.mainnet-beta.solana.com";
   process.env.WALLET_PRIVATE_KEY = freshTestKey();
   process.env.DRY_RUN = "true";
-  process.env.MAX_POSITION_USD = "100";
   process.env.MAX_SWAP_USD = "100";
 
   const { resetConfigForTests, loadConfig } = await import("../src/config.js");
@@ -64,14 +63,13 @@ test("whitelist: only ALLOWED_TELEGRAM_USER_IDS authorized", async () => {
   assert.equal(isAuthorized(mk(111, 12345)), false); // wrong chat
 });
 
-test("assertUsdCap rejects over MAX_POSITION_USD / MAX_SWAP_USD", async () => {
+test("assertUsdCap: only MAX_SWAP_USD remains; no position cap", async () => {
   process.env.DLMM_SKIP_ENV_CHMOD = "1";
   process.env.ALLOWED_TELEGRAM_USER_IDS = "1";
   process.env.TELEGRAM_BOT_TOKEN = "t";
   process.env.TELEGRAM_CHAT_ID = "1";
   process.env.RPC_URL = "https://api.mainnet-beta.solana.com";
   process.env.WALLET_PRIVATE_KEY = freshTestKey();
-  process.env.MAX_POSITION_USD = "100";
   process.env.MAX_SWAP_USD = "100";
   process.env.DRY_RUN = "true";
 
@@ -80,9 +78,8 @@ test("assertUsdCap rejects over MAX_POSITION_USD / MAX_SWAP_USD", async () => {
   loadConfig({ requireTelegram: false });
   const { assertUsdCap } = await import("../src/engine/executor.js");
 
-  assert.doesNotThrow(() => assertUsdCap("position", 100));
   assert.doesNotThrow(() => assertUsdCap("swap", 50));
-  assert.throws(() => assertUsdCap("position", 100.01), /Ditolak.*POSITION/);
+  assert.equal("maxPositionUsd" in loadConfig({ requireTelegram: false }), false);
   assert.throws(() => assertUsdCap("swap", 250), /Ditolak.*SWAP/);
 });
 
@@ -160,6 +157,6 @@ test("loadConfig derives public key and defaults DRY_RUN true", async () => {
   const cfg = loadConfig({ requireTelegram: false });
   assert.equal(cfg.walletPublicKey.toBase58(), kp.publicKey.toBase58());
   assert.equal(cfg.dryRun, true);
-  assert.equal(cfg.maxPositionUsd, 100);
+  assert.equal("maxPositionUsd" in cfg, false);
   assert.equal(cfg.maxSwapUsd, 100);
 });

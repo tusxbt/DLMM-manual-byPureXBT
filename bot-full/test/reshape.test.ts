@@ -91,7 +91,6 @@ test("confirm purpose accepts reshape + DRY_RUN executeReshape with analysis", a
   process.env.RPC_URL = "https://api.mainnet-beta.solana.com";
   process.env.WALLET_PRIVATE_KEY = bs58.encode(Keypair.generate().secretKey);
   process.env.DRY_RUN = "true";
-  process.env.MAX_POSITION_USD = "100";
 
   const { resetConfigForTests, loadConfig } = await import("../src/config.js");
   resetConfigForTests();

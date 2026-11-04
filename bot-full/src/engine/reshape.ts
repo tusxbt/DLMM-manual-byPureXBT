@@ -10,7 +10,7 @@ import { getConnection } from "./connection.js";
 import { applyPriorityFee, getPriorityFeeMicroLamports } from "./priority.js";
 import { getDLMM } from "./dlmmSdk.js";
 import { getWallet, getWalletPublicKey } from "./wallet.js";
-import { assertUsdCap, executePendingTxs } from "./executor.js";
+import { executePendingTxs } from "./executor.js";
 import { getUsdPrices } from "./prices.js";
 import { requireStrategy } from "../strategies/index.js";
 import type { PendingTxItem } from "./pending.js";
@@ -244,7 +244,6 @@ export async function executeReshape(input: {
   }
 
   const width = clampReshapeWidth(input.width ?? analysis.defaultWidth, analysis.defaultWidth);
-  assertUsdCap("position", analysis.estimatedReaddUsd);
 
   if (cfg.dryRun) {
     const range = rangeAboveActive(analysis.activeBinId, width);
@@ -494,21 +493,7 @@ export async function executeReshape(input: {
   const readdUi = atomicToUi(totalDelta, analysis.tokenDecimals);
   const prices = await getUsdPrices([tokenMint]);
   const readdUsd = readdUi * (prices[tokenMint] ?? 0);
-  try {
-    assertUsdCap("position", readdUsd);
-  } catch (e) {
-    steps.push({ step: "readd", ok: false, detail: (e as Error).message });
-    return {
-      success: false,
-      signatures: allSigs,
-      message: formatPartial(
-        `Cap menolak re-add; token sudah di wallet (+${totalDelta.toString()} atomic). Claim/withdraw sudah jalan.`,
-        steps,
-      ),
-      error: (e as Error).message,
-      steps,
-    };
-  }
+
 
   // ── 3) Re-add as new position (token-only, above active) ──────
   try {

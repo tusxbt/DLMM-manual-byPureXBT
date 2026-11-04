@@ -25,15 +25,16 @@ export type ExecResult = {
   landedLabels?: string[];
 };
 
-export function assertUsdCap(kind: "position" | "swap", usd: number): void {
+/** Swap-size guard (MAX_SWAP_USD). Position size has no USD cap (SOL balance check only). */
+export function assertUsdCap(kind: "swap", usd: number): void {
   const cfg = loadConfig({ requireTelegram: false, skipWallet: true });
-  const cap = kind === "position" ? cfg.maxPositionUsd : cfg.maxSwapUsd;
+  const cap = cfg.maxSwapUsd;
   if (!Number.isFinite(usd) || usd < 0) {
     throw new Error(`Nilai USD tidak valid: ${usd}`);
   }
   if (usd > cap) {
     throw new Error(
-      `Ditolak: ${kind === "position" ? "posisi" : "swap"} ${usd.toFixed(2)} USD > batas MAX_${kind === "position" ? "POSITION" : "SWAP"}_USD=${cap}`,
+      `Ditolak: ${kind} ${usd.toFixed(2)} USD > batas MAX_SWAP_USD=${cap}`,
     );
   }
 }

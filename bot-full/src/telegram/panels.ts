@@ -17,7 +17,6 @@ import { searchPools, getActiveBin } from "../engine/dlmm-read.js";
 import { buildAddLiquidityTxs } from "../engine/dlmm-build.js";
 import { getSolUsd } from "../engine/prices.js";
 import { createConfirm } from "../engine/confirm.js";
-import { assertUsdCap } from "../engine/executor.js";
 import { requireStrategy, listStrategies } from "../strategies/index.js";
 import {
   getSwapSlippagePct,
@@ -100,7 +99,6 @@ export async function renderAddPanel(ctx: Context, note?: string): Promise<void>
   const st = loadSettings();
   const text = renderPanelText(p, {
     liqSlippagePct: getLiqSlippagePct(),
-    maxPositionUsd: cfg.maxPositionUsd,
     dryRun: cfg.dryRun,
     note,
   });
@@ -203,8 +201,6 @@ async function deployPanel(ctx: Context): Promise<void> {
     await renderAddPanel(ctx, "⏳ Membangun preview…");
     await refreshPoolInfo(p); // fresh price + balances for exact bin math and cap
     const costUsd = depositUsd(p);
-    if (costUsd == null) return renderAddPanel(ctx, "⛔ Harga USD (SOL/token) tidak tersedia — cap MAX_POSITION_USD tidak bisa dicek, deploy ditolak.");
-    assertUsdCap("position", costUsd); // MAX_POSITION_USD safeguard (checked again on execute)
     if (p.side !== "one_sided_sol" && (p.amountToken ?? 0) > (p.tokenBalance ?? 0))
       return renderAddPanel(ctx, `⛔ Saldo ${tokenSymbol(p)} tidak cukup.`);
     const c = computeRange(p, Number(p.pool?.bin_step || 0), p.activePrice);
@@ -268,8 +264,7 @@ async function deployPanel(ctx: Context): Promise<void> {
       mcMax: marketCap(c.maxPrice, p.solUsd, sup),
       mcNow: marketCap(p.activePrice, p.solUsd, sup),
       clamped: c.clamped,
-      costUsd,
-      capUsd: cfg.maxPositionUsd,
+      costUsd: costUsd ?? NaN,
       slippagePct: getLiqSlippagePct(),
       wide: built.quote ?? null,
       rent,
@@ -556,7 +551,6 @@ export function settingsText(note?: string): string {
     ]),
     section("🔒 Dari .env", [
       kv("Mode", cfg.dryRun ? "🧪 DRY_RUN" : "⚠️ LIVE"),
-      kv("Cap posisi", fmtUsd(cfg.maxPositionUsd)),
       kv("Cap swap", fmtUsd(cfg.maxSwapUsd)),
     ]),
   );

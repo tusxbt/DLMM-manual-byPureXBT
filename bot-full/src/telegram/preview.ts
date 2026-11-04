@@ -22,7 +22,6 @@ export type PreviewData = {
   mcNow: number | null;
   clamped?: boolean;
   costUsd: number;
-  capUsd: number;
   slippagePct: number;
   wide?: { txCount: number; positionRentSol: number; binArrayRentSol: number; binArraysCount: number } | null;
   /** rent quote for any deploy (single-tx too) */
@@ -60,7 +59,6 @@ export function renderAddPreview(d: PreviewData): string {
     ? `−${fmtNum(d.downPct, 1)}%/+${fmtNum(d.upPct, 1)}%`
     : d.upPct > 0 ? `+${fmtNum(d.upPct, 1)}%` : `−${fmtNum(d.downPct, 1)}%`;
   const range = d.minPrice != null && d.maxPrice != null ? `${fmtTinyPrice(d.minPrice)}–${fmtTinyPrice(d.maxPrice)}` : "range n/a";
-  const nearCap = d.capUsd > 0 && d.costUsd >= d.capUsd * 0.8;
   const ba = binArrayWarning(rent);
   const body = [
     `💵 ${d.amount}${usdTxt} · ${d.strategy} · ${d.side}`,
@@ -70,7 +68,6 @@ export function renderAddPreview(d: PreviewData): string {
       ? `🏷 MC ${fmtCompactUsd(d.mcMin)}–${fmtCompactUsd(d.mcMax)}${d.mcNow != null ? ` (now ${fmtCompactUsd(d.mcNow)})` : ""}`
       : null,
     `🧾 ${txs} tx · rent ≈${posRent} SOL (kembali) · slip ${d.slippagePct}%`,
-    nearCap ? `⚠️ Nilai ${fmtUsd(d.costUsd)} / cap ${fmtUsd(d.capUsd)}` : null,
   ].filter(Boolean).join("\n");
   const funds = d.funds && !d.funds.ok ? fundsLines(d.funds) : null;
   return [`👀 **${d.pool}** · ${d.dryRun ? "🧪 DRY_RUN" : "⚠️ LIVE"}`, body, ba, funds, `⏳ Konfirmasi ${d.ttlSec}s`]
