@@ -6,7 +6,7 @@ import { getSession, resetSession } from "./session.js";
 import { confirmKeyboard, mainMenuKeyboard } from "./menus.js";
 import { loadSettings, saveSettings } from "../store/settings.js";
 import { searchPools, getActiveBin } from "../engine/dlmm-read.js";
-import { buildAddLiquidityTxs, binsFromPct } from "../engine/dlmm-build.js";
+import { buildAddLiquidityTxs } from "../engine/dlmm-build.js";
 import { getSolUsd } from "../engine/prices.js";
 import { createConfirm } from "../engine/confirm.js";
 import { assertUsdCap } from "../engine/executor.js";
@@ -34,6 +34,8 @@ import {
   amountPickerKeyboard,
   rangeLabel,
   modeLabel,
+  computeRange,
+  MAX_BINS_PER_POSITION,
 } from "./add-panel.js";
 
 const key = (ctx: Context) => String(ctx.chat?.id ?? "");
@@ -68,7 +70,7 @@ async function deleteUserMsg(ctx: Context): Promise<void> {
 
 function panelOf(ctx: Context): AddPanelState {
   const s = getSession(key(ctx));
-  if (!s.data.panel) s.data.panel = defaultPanel();
+  if (!s.data.panel) s.data.panel = defaultPanel(undefined, loadSettings().binPresets);
   return s.data.panel;
 }
 
@@ -96,7 +98,7 @@ const BACK_KB = () => new InlineKeyboard().text("⬅️ Kembali ke panel", "ap:b
 export async function startAdd(ctx: Context): Promise<void> {
   resetSession(key(ctx));
   const s = getSession(key(ctx));
-  s.data.panel = defaultPanel();
+  s.data.panel = defaultPanel(undefined, loadSettings().binPresets);
   await renderAddPanel(ctx, "Mulai dari ✏️ Pool (atau paste CA token di chat).");
 }
 
@@ -104,7 +106,7 @@ export async function startAdd(ctx: Context): Promise<void> {
 export async function showPoolPickerForPanel(ctx: Context, pools: Array<Record<string, unknown>>): Promise<void> {
   const s = getSession(key(ctx));
   s.data.pools = pools;
-  if (!s.data.panel) s.data.panel = defaultPanel();
+  if (!s.data.panel) s.data.panel = defaultPanel(undefined, loadSettings().binPresets);
   const kb = new InlineKeyboard();
   pools.forEach((p, i) => {
     const label = `${p.name} | step ${p.bin_step} | fee ${fmtNum(Number(p.fee_pct), 2)}% | TVL ${fmtUsd(Number(p.tvl))}`;
@@ -114,27 +116,19 @@ export async function showPoolPickerForPanel(ctx: Context, pools: Array<Record<s
   await showSub(ctx, `🏊 Pilih pool DLMM (urut TVL, ${pools.length} hasil):`, kb);
 }
 
-async function resolveBins(p: AddPanelState): Promise<{ below: number; above: number; downPct: number | null; upPct: number | null }> {
-  const r = p.range;
-  if (r.kind === "bins") return { below: r.below, above: r.above, downPct: null, upPct: null };
-  const poolAddr = String(p.pool?.pool || "");
-  const ab = await getActiveBin(poolAddr);
-  const binStep = Number(p.pool?.bin_step || 100);
-  let down: number;
-  let up: number;
-  if (r.kind === "preset") {
-    down = r.downPct;
-    up = r.upPct;
-  } else {
-    down = ab.price > 0 ? Math.max(0, ((ab.price - r.min) / ab.price) * 100) : 0;
-    up = ab.price > 0 ? Math.max(0, ((r.max - ab.price) / ab.price) * 100) : 0;
+/** Fetch active price + SOL/USD for display; failures are non-fatal. */
+async function refreshPoolInfo(p: AddPanelState): Promise<void> {
+  if (!p.pool?.pool) return;
+  try {
+    p.activePrice = (await getActiveBin(String(p.pool.pool))).price;
+  } catch {
+    p.activePrice = undefined;
   }
-  return {
-    below: binsFromPct(ab.price, down, binStep, "down"),
-    above: binsFromPct(ab.price, up, binStep, "up"),
-    downPct: down,
-    upPct: up,
-  };
+  try {
+    p.solUsd = await getSolUsd();
+  } catch {
+    /* ignore */
+  }
 }
 
 async function deployPanel(ctx: Context): Promise<void> {
@@ -147,7 +141,11 @@ async function deployPanel(ctx: Context): Promise<void> {
     const costUsd = (p.amountSol || 0) * solUsd;
     assertUsdCap("position", costUsd); // MAX_POSITION_USD safeguard (checked again on execute)
     await renderAddPanel(ctx, "⏳ Membangun transaksi…");
-    const bins = await resolveBins(p);
+    await refreshPoolInfo(p); // fresh active price for exact bin math
+    const c = computeRange(p, Number(p.pool?.bin_step || 0), p.activePrice);
+    if (c.error) return renderAddPanel(ctx, `⛔ ${c.error}`);
+    if (c.total > MAX_BINS_PER_POSITION) return renderAddPanel(ctx, `⛔ Maks ${MAX_BINS_PER_POSITION} bins per posisi.`);
+    const bins = { below: c.below, above: c.above, downPct: c.downPct, upPct: c.upPct };
     const strat = requireStrategy(p.strategyId);
     const built = await buildAddLiquidityTxs({
       poolAddress: String(p.pool?.pool),
@@ -170,13 +168,20 @@ async function deployPanel(ctx: Context): Promise<void> {
       `Strategi: ${strat.label} | mode: ${modeLabel(p.side)}`,
       `Amount: ${fmtNum(p.amountSol)} SOL` + (p.side === "two_sided" ? ` + token ${fmtNum(p.amountToken ?? 0)}` : ""),
       `Range: ${rangeLabel(p.range)}`,
-      `Bins bawah/atas: ${bins.below} / ${bins.above}`,
+      `Bins: ${c.total} (${bins.below} bawah / ${bins.above} atas) | −${fmtNum(c.downPct, 2)}% / +${fmtNum(c.upPct, 2)}%`,
+      c.minPrice != null && c.maxPrice != null
+        ? `Harga: ${fmtNum(c.minPrice, 10)} → ${fmtNum(c.maxPrice, 10)} SOL` +
+          (p.solUsd ? ` (${fmtUsd(c.minPrice * p.solUsd)} → ${fmtUsd(c.maxPrice * p.solUsd)})` : "")
+        : "",
+      c.clamped ? `⚠️ Custom harga dipotong ke ${MAX_BINS_PER_POSITION} bins.` : "",
       `Slippage LIQ: ${getLiqSlippagePct()}%`,
       `Perkiraan cost: ${fmtUsd(costUsd)} (cap ${fmtUsd(cfg.maxPositionUsd)})`,
       `Position baru: ${shortAddr(built.position)}`,
       cfg.dryRun ? "Mode: DRY_RUN (simulasi)" : "Mode: LIVE — akan ditandatangani & dikirim",
       `Konfirmasi dalam ${CONFIRM_TTL_MS / 1000}s.`,
-    ].join("\n");
+    ]
+      .filter(Boolean)
+      .join("\n");
     const req = createConfirm({
       purpose: "add",
       summary,
@@ -242,7 +247,7 @@ export function registerAddPanel(bot: Bot): void {
     }
     if (field === "mode") return showSub(ctx, "🧭 Pilih mode deposit:", modePickerKeyboard(p.side));
     if (field === "strat") return showSub(ctx, "📐 Pilih strategi:", strategyPickerKeyboard(p.strategyId));
-    if (field === "range") return showSub(ctx, `📏 Pilih range (${requireStrategy(p.strategyId).label}):`, rangePickerKeyboard(p));
+    if (field === "range") return showSub(ctx, `📏 Pilih range (${requireStrategy(p.strategyId).label}):`, rangePickerKeyboard(p, loadSettings().binPresets));
     if (field === "slip") {
       s.awaitingText = async (text) => {
         await deleteUserMsg(ctx);
@@ -263,7 +268,9 @@ export function registerAddPanel(bot: Bot): void {
     const pool = s.data.pools?.[Number(ctx.match![1])];
     s.data.panelMsgId = ctx.callbackQuery.message?.message_id ?? s.data.panelMsgId;
     if (!pool) return renderAddPanel(ctx, "Daftar pool kadaluarsa — ✏️ Pool lagi.");
-    panelOf(ctx).pool = pool;
+    const pp = panelOf(ctx);
+    pp.pool = pool;
+    await refreshPoolInfo(pp);
     await renderAddPanel(ctx, panelOf(ctx).amountSol ? undefined : "Pool dipilih. Isi ✏️ Amount lalu 🚀 Deploy.");
   });
 
@@ -299,10 +306,12 @@ export function registerAddPanel(bot: Bot): void {
             await deleteUserMsg(ctx);
             const b = parseBins(text);
             if (!b) return renderAddPanel(ctx, "Format bins: <bawah> <atas>, contoh 40 2");
+            if (b.below + b.above > MAX_BINS_PER_POSITION)
+              return renderAddPanel(ctx, `⛔ Total ${b.below + b.above} bins > ${MAX_BINS_PER_POSITION}. Kecilkan.`);
             panelOf(ctx).range = { kind: "bins", below: b.below, above: b.above };
             await renderAddPanel(ctx);
           };
-          return showSub(ctx, "📏 Ketik: <bins_bawah> <bins_atas>  (contoh: 40 2)", BACK_KB());
+          return showSub(ctx, `📏 Ketik: <bins_bawah> <bins_atas>  (contoh: 40 2, total maks ${MAX_BINS_PER_POSITION})`, BACK_KB());
         }
         if (v === "_price") {
           s.awaitingText = async (text) => {
@@ -312,9 +321,9 @@ export function registerAddPanel(bot: Bot): void {
             panelOf(ctx).range = { kind: "price", min: r.min, max: r.max };
             await renderAddPanel(ctx);
           };
-          return showSub(ctx, "📏 Ketik: <harga_min> <harga_max> (harga pool)", BACK_KB());
+          return showSub(ctx, `📏 Ketik: <harga_min> <harga_max> dalam SOL per token${p.activePrice ? ` (aktif ${fmtNum(p.activePrice, 10)})` : ""}. >${MAX_BINS_PER_POSITION} bins akan dipotong.`, BACK_KB());
         }
-        s.data.panel = setRangePreset(p, v);
+        s.data.panel = setRangePreset(p, v, loadSettings().binPresets);
       }
       await renderAddPanel(ctx);
     } catch (e) {
@@ -334,6 +343,7 @@ function settingsText(note?: string): string {
     `🎚 SWAP slippage: ${getSwapSlippagePct()}% (Jupiter bps = ×100)`,
     `🎚 LIQ slippage: ${getLiqSlippagePct()}% (Meteora %)`,
     `💵 Amount presets: ${st.amountPresets.join(", ")} SOL`,
+    `📏 Bin presets: Narrow ${st.binPresets.narrow} / Medium ${st.binPresets.medium} / Wide ${st.binPresets.wide} bins (maks 69)`,
     "",
     "🔒 Dari .env (ubah manual di server):",
     `DRY_RUN: ${cfg.dryRun} | MAX_POSITION_USD: ${cfg.maxPositionUsd} | MAX_SWAP_USD: ${cfg.maxSwapUsd}`,
@@ -352,6 +362,8 @@ function settingsKb(): InlineKeyboard {
     .text("✏️ LIQ slippage", "st:edit:liq")
     .row()
     .text("✏️ Amount presets", "st:edit:presets")
+    .row()
+    .text("✏️ Bin presets", "st:edit:bins")
     .row()
     .text("⬅️ Menu", "menu:cancel");
 }
@@ -376,13 +388,19 @@ export function parsePresets(text: string): number[] | null {
   return arr;
 }
 
+export function parseBinPresets(text: string): { narrow: number; medium: number; wide: number } | null {
+  const a = text.split(/[\s,;]+/).filter(Boolean).map(Number);
+  if (a.length !== 3 || !a.every((n) => Number.isInteger(n) && n >= 1 && n <= 69)) return null;
+  return { narrow: a[0], medium: a[1], wide: a[2] };
+}
+
 export function registerSettingsPanel(bot: Bot): void {
   bot.callbackQuery("st:back", async (ctx) => {
     await ctx.answerCallbackQuery();
     getSession(key(ctx)).awaitingText = null;
     await renderSettings(ctx);
   });
-  bot.callbackQuery(/^st:edit:(swap|liq|presets)$/, async (ctx) => {
+  bot.callbackQuery(/^st:edit:(swap|liq|presets|bins)$/, async (ctx) => {
     await ctx.answerCallbackQuery();
     const s = getSession(key(ctx));
     s.data.settingsMsgId = ctx.callbackQuery.message?.message_id ?? s.data.settingsMsgId;
@@ -391,6 +409,14 @@ export function registerSettingsPanel(bot: Bot): void {
     s.awaitingText = async (text) => {
       await deleteUserMsg(ctx);
       try {
+        if (f === "bins") {
+          const bp = parseBinPresets(text);
+          if (!bp) return renderSettings(ctx, "Format: 3 angka bins 1–69 (narrow medium wide), contoh: 20 40 69");
+          const st = loadSettings();
+          st.binPresets = bp;
+          saveSettings(st);
+          return renderSettings(ctx, "Bin presets tersimpan (berlaku untuk panel /add berikutnya).");
+        }
         if (f === "presets") {
           const arr = parsePresets(text);
           if (!arr) return renderSettings(ctx, "Format presets: angka SOL dipisah spasi/koma, max 6. contoh: 0.5 1 2");
@@ -408,7 +434,9 @@ export function registerSettingsPanel(bot: Bot): void {
       }
     };
     const prompt =
-      f === "presets"
+      f === "bins"
+        ? `Ketik 3 angka bins narrow medium wide (1–69). Sekarang: ${Object.values(loadSettings().binPresets).join(" ")}`
+        : f === "presets"
         ? `Ketik amount presets SOL (contoh: 0.5 1 2). Sekarang: ${loadSettings().amountPresets.join(", ")}`
         : `Ketik ${f === "swap" ? "SWAP" : "LIQ"} slippage % (0.1–50). Sekarang: ${f === "swap" ? getSwapSlippagePct() : getLiqSlippagePct()}%`;
     s.data.settingsMsgId = await upsert(ctx, s.data.settingsMsgId, `⚙️ ${prompt}`, back);
