@@ -59,14 +59,14 @@ export type ReshapeAnalysis = {
   noteBothBins: string;
 };
 
-function serializeTx(tx: Transaction, label: string): PendingTxItem {
+export function serializeTx(tx: Transaction, label: string): PendingTxItem {
   const serialized = tx
     .serialize({ requireAllSignatures: false, verifySignatures: false })
     .toString("base64");
   return { serialized, encoding: "legacy", label };
 }
 
-async function withBlockhash(tx: Transaction, feePayer: PublicKey): Promise<Transaction> {
+export async function withBlockhash(tx: Transaction, feePayer: PublicKey): Promise<Transaction> {
   applyPriorityFee(tx, await getPriorityFeeMicroLamports());
   const conn = getConnection();
   const { blockhash } = await conn.getLatestBlockhash("confirmed");

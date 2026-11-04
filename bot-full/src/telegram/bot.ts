@@ -26,7 +26,8 @@ import { buildAddLiquidityTxs, buildClaimFeeTxs, buildRemoveAndCloseTxs, binsFro
 import { getBalances } from "../engine/connection.js";
 import { getSolUsd, getUsdPrices } from "../engine/prices.js";
 import { createConfirm, takeAwaiting, markConfirm, cancelConfirm, renewConfirm, expiredAction } from "../engine/confirm.js";
-import { resolvePosition, clearCardsCache } from "./positions-view.js";
+import { resolvePosition, clearCardsCache, showFlipPreview } from "./positions-view.js";
+import { executeFlip } from "../engine/flip.js";
 import { assertUsdCap, executePendingTxs } from "../engine/executor.js";
 import { listStrategies, requireStrategy } from "../strategies/index.js";
 import { getSwapQuote, buildSwapTx, uiAmountToAtomic, normalizeMint } from "../engine/jupiter-swap.js";
@@ -193,6 +194,11 @@ export function createBot(): Bot {
         await ctx.editMessageText("⏰ Waktu habis — menyiapkan konfirmasi baru…");
         return onZapoutPos(ctx, r.index);
       }
+      if (fresh.kind === "flip") {
+        const r = await resolvePosition(ctx, fresh.position).catch(() => null);
+        if (!r) return void (await ctx.editMessageText("Posisi sudah tertutup."));
+        return showFlipPreview(ctx, r.p);
+      }
       if (fresh.kind === "renew") {
         const n = renewConfirm(req);
         await ctx.editMessageText("⏰ Waktu habis — konfirmasi baru ⬇️");
@@ -351,7 +357,8 @@ const PURPOSE_LABEL: Record<string, string> = {
   withdraw: "📤 Withdraw",
   claim: "💰 Claim",
   swap: "💱 Swap",
-  reshape: "🔀 Flip",
+  reshape: "🆕 Reshape",
+  flip: "🔀 Flip",
   zapout: "⚡ Zapout",
 };
 
@@ -557,6 +564,11 @@ async function runConfirmedAction(
       message: result.message || `in=${payload.inAmount} out≈${payload.outAmount}`,
       error: result.error,
     };
+  }
+
+  if (purpose === "flip") {
+    const r = await executeFlip(payload.analysis as never);
+    return { success: r.success, signatures: r.signatures, message: r.message, error: r.error };
   }
 
   if (purpose === "reshape") {

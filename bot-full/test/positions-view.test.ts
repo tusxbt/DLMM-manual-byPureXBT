@@ -53,7 +53,7 @@ test("age + keyboard", () => {
   assert.equal(fmtAge(undefined), null);
   const A = "7b9f6yDvVthv3BXDL6isBWe8gcrbjBVvXrJz7yKV1tcg";
   const kb = positionKeyboard(A).inline_keyboard.flat().map((b) => (b as { callback_data: string }).callback_data);
-  for (const a of ["exit", "claim", "zap", "repo", "flip", "ref", "card"]) assert.ok(kb.includes(`pv:${a}:${A}`), a);
+  for (const a of ["exit", "claim", "zap", "repo", "rs", "ref", "card"]) assert.ok(kb.includes(`pv:${a}:${A}`), a);
   assert.ok(kb.includes("pv:list"));
   // Telegram callback_data limit is 64 bytes
   for (const c of kb) assert.ok(Buffer.byteLength(c) <= 64, c);

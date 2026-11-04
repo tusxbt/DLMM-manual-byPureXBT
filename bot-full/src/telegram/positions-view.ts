@@ -15,12 +15,16 @@ import { renderBinsChart } from "../render/bins-chart.js";
 import { loadConfig, CONFIRM_TTL_MS } from "../config.js";
 import { fmtUsd, shortAddr, strategyLabel } from "../format.js";
 import { redactSecrets } from "../logger.js";
+import { code } from "./html.js";
 import { getSession } from "./session.js";
 import { confirmKeyboard, mainMenuKeyboard } from "./menus.js";
 import { loadTrackedPositions, type TrackedPosition } from "../store/positions.js";
 import { listLivePositions, searchPools, type LivePosition } from "../engine/dlmm-read.js";
 import { createConfirm } from "../engine/confirm.js";
 import { onReshapePos } from "./reshape-handlers.js";
+import { analyzeFlip, type FlipAnalysis } from "../engine/flip.js";
+import { checkFunds } from "../engine/funds-check.js";
+import { getBalances } from "../engine/connection.js";
 import { onZapoutPos } from "./zapout-handlers.js";
 
 const key = (ctx: Context) => String(ctx.chat?.id ?? "");
@@ -147,7 +151,7 @@ export function positionKeyboard(addr: string): InlineKeyboard {
     .text("⚡ → SOL", `pv:zap:${addr}`)
     .text("♻️ Reposition", `pv:repo:${addr}`)
     .row()
-    .text("🔀 Flip", `pv:flip:${addr}`)
+    .text("🔁 Reshape", `pv:rs:${addr}`)
     .text("📈 Card", `pv:card:${addr}`)
     .row()
     .text("← Positions", "pv:list")
@@ -414,7 +418,76 @@ async function dropPhoto(ctx: Context): Promise<boolean> {
   return false;
 }
 
+/** Reshape menu for one position (text; replaces a photo Detail). */
+export function reshapeMenu(p: { position: string; pair?: string; pool_name?: string }): { text: string; kb: InlineKeyboard } {
+  const a = p.position;
+  return {
+    text: [`🔁 **Reshape** — ${p.pair || p.pool_name || "posisi"} · ${code(shortAddr(a))}`, "", "🔀 **Flip** — tarik token saja, add ulang BidAsk sisi token di posisi yang sama (SOL tetap, tanpa swap)", "🆕 **Reshape baru** — claim + tarik token, buka posisi BidAsk baru di atas harga", "♻️ **Reposition** — tutup lalu buka ulang di harga sekarang"].join("\n"),
+    kb: new InlineKeyboard().text("🔀 Flip", `pv:flip:${a}`).text("🆕 Reshape baru", `pv:rsnew:${a}`).row().text("♻️ Reposition", `pv:repo:${a}`).row().text("⬅️ Kembali", `pv:open:${a}`),
+  };
+}
+
+/** Pure preview text for Flip. */
+export function renderFlipPreview(f: FlipAnalysis, funds?: { ok: boolean; needSol: number; haveSol: number } | null, live = false): { text: string; blocked: boolean } {
+  const head = `🔀 **Flip** — ${f.poolName || shortAddr(f.pool)} · ${code(shortAddr(f.position))}`;
+  if (f.empty) return { text: [head, "", "Tidak ada token untuk di-flip."].join("\n"), blocked: true };
+  const L: string[] = [head, `Range posisi [${f.lower}, ${f.upper}] · active ${f.activeBinId}`];
+  L.push(`Tarik: ${f.tokenUi.toPrecision(6)} token (${fmtUsd(f.tokenUsd)}) dari ${f.base?.tokenBins.length ?? 0} bin`);
+  if (f.solFromMixedUi > 0) L.push(`SOL dari bin campuran → wallet: ${f.solFromMixedUi.toFixed(4)}`);
+  if (!f.target.ok) {
+    L.push("", `⚠️ ${f.target.reason}`, "Pakai 🆕 Reshape baru atau ♻️ Reposition.");
+    return { text: L.join("\n"), blocked: true };
+  }
+  L.push(`Add ulang: ${f.tokenUi.toPrecision(6)} token · BidAsk · bins [${f.target.minBinId}, ${f.target.maxBinId}] (${f.target.bins} bin)${f.target.capped ? " · dibatasi 69 bin terdekat" : ""}`);
+  L.push("Posisi & bin SOL tetap · tanpa swap · tanpa rent posisi baru");
+  let blocked = false;
+  if (funds) {
+    L.push(`${funds.ok ? "✅" : "⛔"} SOL fee: butuh ${funds.needSol.toFixed(4)} · ada ${funds.haveSol.toFixed(4)}`);
+    if (!funds.ok && live) blocked = true;
+  }
+  return { text: L.join("\n"), blocked };
+}
+
+/** Show Flip preview in place with Confirm/Cancel/Kembali. */
+export async function showFlipPreview(ctx: Context, p: PositionCard): Promise<void> {
+  const msgId = ctx.callbackQuery?.message?.message_id;
+  const edit = async (text: string, kb: InlineKeyboard) => {
+    if (msgId) await ctx.editMessageText(text, { reply_markup: kb }).catch(async () => void (await ctx.reply(text, { reply_markup: kb })));
+    else await ctx.reply(text, { reply_markup: kb });
+  };
+  const back = new InlineKeyboard().text("⬅️ Kembali", `pv:rs:${p.position}`);
+  await edit("⏳ Analisis bin token…", back);
+  let f: FlipAnalysis;
+  try {
+    f = await analyzeFlip({ poolAddress: String(p.pool), positionAddress: p.position, poolName: p.pair || p.pool_name });
+  } catch (e) {
+    return edit(`❌ ${redactSecrets((e as Error).message)}`, back);
+  }
+  const cfg = loadConfig({ requireTelegram: false, skipWallet: true });
+  let funds: ReturnType<typeof checkFunds> | null = null;
+  try {
+    const bal = await getBalances();
+    funds = checkFunds({ haveSol: bal.sol, amountSol: 0, txCount: (f.base?.tokenRanges.length ?? 1) + 1 });
+  } catch {
+    funds = null;
+  }
+  const pv = renderFlipPreview(f, funds, !cfg.dryRun);
+  if (pv.blocked) return edit(pv.text, back);
+  const req = createConfirm({ purpose: "flip", summary: pv.text, payload: { position: p.position, pool: String(p.pool), analysis: f } });
+  const kb = new InlineKeyboard().text("✅ Confirm", `confirm:yes:${req.id}`).text("❌ Cancel", `confirm:no:${req.id}`).row().text("⬅️ Kembali", `pv:rs:${p.position}`);
+  await edit([pv.text, cfg.dryRun ? "Mode: DRY_RUN" : "Mode: LIVE", `Konfirmasi dalam ${CONFIRM_TTL_MS / 1000}s.`].join("\n"), kb);
+}
+
 export function registerPositionsView(bot: Bot): void {
+  bot.callbackQuery(/^pv:(rs|rsnew):([1-9A-HJ-NP-Za-km-z]{32,44})$/, async (ctx) => {
+    await ctx.answerCallbackQuery();
+    const r = await resolvePosition(ctx, ctx.match![2]).catch(() => null);
+    if (!r) return void (await ctx.reply("Posisi sudah tertutup.", { reply_markup: new InlineKeyboard().text("📊 Positions", "pv:lref") }));
+    if (ctx.match![1] === "rsnew") return onReshapePos(ctx, r.index);
+    const m = reshapeMenu(r.p);
+    if (await dropPhoto(ctx)) await ctx.reply(m.text, { reply_markup: m.kb });
+    else await ctx.editMessageText(m.text, { reply_markup: m.kb }).catch(async () => void (await ctx.reply(m.text, { reply_markup: m.kb })));
+  });
   bot.callbackQuery("pv:list", async (ctx) => {
     await ctx.answerCallbackQuery();
     await dropPhoto(ctx);
@@ -482,7 +555,7 @@ export function registerPositionsView(bot: Bot): void {
     }
     await ctx.answerCallbackQuery();
     if (action === "zap") return onZapoutPos(ctx, index);
-    if (action === "flip") return onReshapePos(ctx, index);
+    if (action === "flip") return showFlipPreview(ctx, p);
     const c = confirmFor(action === "claim" ? "claim" : "remove", p, action === "repo");
     await presentConfirm(ctx, c.text, c.id);
   });
