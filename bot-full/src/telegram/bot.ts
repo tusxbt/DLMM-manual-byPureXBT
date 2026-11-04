@@ -25,6 +25,8 @@ import {
   executeReshape,
 } from "./reshape-handlers.js";
 import { registerAddPanel, registerSettingsPanel, startAdd, showSettings, showPoolPickerForPanel, bottomKeyboard, replyKbAction } from "./panels.js";
+import { registerPositionsView, showPositionCards } from "./positions-view.js";
+import { openRepositionPanel } from "./panels.js";
 import { startZapout, onZapoutPos, executeZapout } from "./zapout-handlers.js";
 import { detectMintAddress } from "../engine/mint-detect.js";
 import {
@@ -71,7 +73,7 @@ export function createBot(): Bot {
   });
 
   bot.command("balance", async (ctx) => showBalance(ctx));
-  bot.command("positions", async (ctx) => showPositions(ctx));
+  bot.command("positions", async (ctx) => showPositionCards(ctx));
   bot.command("settings", async (ctx) => showSettings(ctx));
   bot.command("pools", async (ctx) => {
     const q = ctx.match?.trim();
@@ -104,7 +106,7 @@ export function createBot(): Bot {
     }
     const map: Record<string, (c: Context) => Promise<void>> = {
       add: startAdd,
-      positions: showPositions,
+      positions: showPositionCards,
       claim: startClaim,
       remove: startRemove,
       swap: startSwap,
@@ -168,6 +170,12 @@ export function createBot(): Bot {
           .join("\n"),
         { reply_markup: mainMenuKeyboard() },
       );
+      const repo = (req.payload as Record<string, unknown>).reposition as { bins?: number } | undefined;
+      if (result.success && req.purpose === "remove" && repo) {
+        resetSession(chatKey(ctx));
+        await openRepositionPanel(ctx, String(req.payload.pool), Number(repo.bins || 40));
+        return;
+      }
     } catch (e) {
       markConfirm(id, "failed", (e as Error).message);
       await ctx.reply(`❌ ${redactSecrets((e as Error).message)}`, { reply_markup: mainMenuKeyboard() });
@@ -176,6 +184,7 @@ export function createBot(): Bot {
   });
 
   registerAddPanel(bot);
+  registerPositionsView(bot);
   registerSettingsPanel(bot);
 
   // claim / remove index callbacks
@@ -268,7 +277,7 @@ export function createBot(): Bot {
     if (kbAction) {
       s.awaitingText = null;
       if (kbAction === "home") return replyMenu(ctx);
-      if (kbAction === "positions") return showPositions(ctx);
+      if (kbAction === "positions") return showPositionCards(ctx);
       if (kbAction === "trade") return startSwap(ctx);
       if (kbAction === "wallet") return showBalance(ctx);
       return showSettings(ctx);

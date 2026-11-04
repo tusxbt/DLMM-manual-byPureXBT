@@ -406,6 +406,24 @@ export function registerAddPanel(bot: Bot): void {
   });
 }
 
+/** Reposition step 2: fresh Add panel on the same pool, same width (bins) below current price. */
+export async function openRepositionPanel(ctx: Context, poolAddress: string, bins: number): Promise<void> {
+  const s = getSession(key(ctx));
+  s.data.panel = defaultPanel(undefined, loadSettings().binPresets);
+  s.data.panelMsgId = undefined;
+  try {
+    const hit = (await searchPools(poolAddress, 1)).find((x) => x.pool === poolAddress);
+    if (!hit) return void (await ctx.reply("Pool tidak ditemukan untuk reposition — pakai /add."));
+    const p = s.data.panel;
+    p.pool = hit as unknown as Record<string, unknown>;
+    p.range = { kind: "bins", below: Math.max(1, Math.min(MAX_BINS_PER_POSITION, bins)), above: 0 };
+    await refreshPoolInfo(p);
+    await renderAddPanel(ctx, "♻️ Reposition: lebar sama di bawah harga sekarang. Atur amount/sisi lalu 👀 Preview.");
+  } catch (e) {
+    await ctx.reply(`❌ ${redactSecrets((e as Error).message)}`);
+  }
+}
+
 // ── Persistent reply keyboard (bottom bar) ──────────────────────
 
 export const REPLY_KB_LABELS = {

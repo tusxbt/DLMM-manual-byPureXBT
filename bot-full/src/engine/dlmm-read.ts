@@ -60,15 +60,29 @@ export async function getActiveBin(poolAddress: string): Promise<{ binId: number
   return { binId: active.binId, price: Number(price) };
 }
 
+/** DLMM bin price in UI units (token Y per token X). */
+export function binIdToUiPrice(binId: number, binStep: number, decX: number, decY: number): number {
+  return Math.pow(1 + binStep / 10_000, binId) * Math.pow(10, decX - decY);
+}
+
 export type LivePosition = {
   position: string;
   pool: string;
   pair?: string;
   total_value_usd: number;
   unclaimed_fees_usd: number;
-  pnl_usd: number;
-  pnl_pct: number;
+  /** null when deposit cost is unknown (never invented) */
+  pnl_usd: number | null;
+  pnl_pct: number | null;
   in_range: boolean | null;
+  active_id?: number;
+  bin_step?: number;
+  /** UI prices (token Y per token X) */
+  min_price?: number | null;
+  max_price?: number | null;
+  active_price?: number | null;
+  mint_x?: string;
+  mint_y?: string;
   min_bin?: number;
   max_bin?: number;
   amount_x?: number;
@@ -102,6 +116,10 @@ export async function listLivePositions(costByPosition: Record<string, number> =
     inRange: boolean | null;
     minBin?: number;
     maxBin?: number;
+    activeId?: number;
+    binStep?: number;
+    decX: number;
+    decY: number;
   };
   const raws: Raw[] = [];
 
@@ -121,7 +139,7 @@ export async function listLivePositions(costByPosition: Record<string, number> =
       }>;
       tokenX?: { publicKey?: PublicKey; mint?: PublicKey; decimal?: number };
       tokenY?: { publicKey?: PublicKey; mint?: PublicKey; decimal?: number };
-      lbPair?: { activeId?: number };
+      lbPair?: { activeId?: number; binStep?: number };
     };
     const mintX = (g.tokenX?.publicKey || g.tokenX?.mint)?.toString?.() || "";
     const mintY = (g.tokenY?.publicKey || g.tokenY?.mint)?.toString?.() || "";
@@ -130,6 +148,7 @@ export async function listLivePositions(costByPosition: Record<string, number> =
     const decX = Number(g.tokenX?.decimal ?? 9);
     const decY = Number(g.tokenY?.decimal ?? 9);
     const activeId = g.lbPair?.activeId;
+    const binStep = g.lbPair?.binStep;
 
     for (const pos of g.lbPairPositionsData || []) {
       const pd = pos.positionData || {};
@@ -156,6 +175,10 @@ export async function listLivePositions(costByPosition: Record<string, number> =
         inRange,
         minBin,
         maxBin,
+        activeId,
+        binStep,
+        decX,
+        decY,
       });
     }
   }
@@ -166,17 +189,27 @@ export async function listLivePositions(costByPosition: Record<string, number> =
     const py = prices[r.mintY] ?? 0;
     const value = r.totalX * px + r.totalY * py;
     const fees = r.feeX * px + r.feeY * py;
-    const cost = costByPosition[r.position] ?? value;
-    const pnl = value + fees - cost;
-    const pnlPct = cost > 0 ? (pnl / cost) * 100 : 0;
+    const cost = costByPosition[r.position];
+    const known = cost != null && cost > 0 && (px > 0 || r.totalX === 0) && (py > 0 || r.totalY === 0);
+    const pnl = known ? value + fees - cost : null;
+    const pnlPct = known && pnl != null ? (pnl / cost) * 100 : null;
+    const binPrice = (id?: number) =>
+      id != null && r.binStep ? binIdToUiPrice(id, r.binStep, r.decX, r.decY) : null;
     return {
       position: r.position,
       pool: r.pool,
       total_value_usd: Math.round(value * 100) / 100,
       unclaimed_fees_usd: Math.round(fees * 100) / 100,
-      pnl_usd: Math.round(pnl * 100) / 100,
-      pnl_pct: Math.round(pnlPct * 100) / 100,
+      pnl_usd: pnl == null ? null : Math.round(pnl * 100) / 100,
+      pnl_pct: pnlPct == null ? null : Math.round(pnlPct * 100) / 100,
       in_range: r.inRange,
+      active_id: r.activeId,
+      bin_step: r.binStep,
+      min_price: binPrice(r.minBin),
+      max_price: binPrice(r.maxBin),
+      active_price: binPrice(r.activeId),
+      mint_x: r.mintX,
+      mint_y: r.mintY,
       min_bin: r.minBin,
       max_bin: r.maxBin,
       amount_x: r.totalX,
