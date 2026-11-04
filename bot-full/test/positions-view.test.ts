@@ -51,9 +51,13 @@ test("card: PnL n/a when cost unknown; real when known", () => {
 test("age + keyboard", () => {
   assert.equal(fmtAge(new Date(Date.now() - 53 * 60000).toISOString()), "53m");
   assert.equal(fmtAge(undefined), null);
-  const kb = JSON.stringify(positionKeyboard(2).inline_keyboard);
-  for (const cb of ["pv:exit:2", "pv:claim:2", "pv:zap:2", "pv:repo:2", "pv:flip:2", "pv:ref:2", "pv:list"]) assert.ok(kb.includes(cb), cb);
-  assert.ok(positionKeyboard(0).inline_keyboard.every((r) => r.length <= 2));
+  const A = "7b9f6yDvVthv3BXDL6isBWe8gcrbjBVvXrJz7yKV1tcg";
+  const kb = positionKeyboard(A).inline_keyboard.flat().map((b) => (b as { callback_data: string }).callback_data);
+  for (const a of ["exit", "claim", "zap", "repo", "flip", "ref", "card"]) assert.ok(kb.includes(`pv:${a}:${A}`), a);
+  assert.ok(kb.includes("pv:list"));
+  // Telegram callback_data limit is 64 bytes
+  for (const c of kb) assert.ok(Buffer.byteLength(c) <= 64, c);
+  assert.ok(positionKeyboard(A).inline_keyboard.every((r) => r.length <= 2));
 });
 
 import { renderPositionList, positionButtonLabel, PAGE_SIZE } from "../src/telegram/positions-view.js";
@@ -78,7 +82,7 @@ test("list: one message, totals, paginated by 8", () => {
   assert.ok(cb(r0).includes("pv:pg:1") && !cb(r0).includes("pv:pg:-1") && cb(r0).includes("pv:lref"));
   const r2 = renderPositionList(cards, 99);
   assert.equal(r2.page, 2);
-  assert.deepEqual(cb(r2).filter((c) => c.startsWith("pv:open:")), ["pv:open:16", "pv:open:17", "pv:open:18"]);
+  assert.deepEqual(cb(r2).filter((c) => c.startsWith("pv:open:")), ["pv:open:P16", "pv:open:P17", "pv:open:P18"]);
   assert.ok(cb(r2).includes("pv:pg:1") && !cb(r2).includes("pv:pg:3"));
   const one = renderPositionList([mk(1)], 0);
   assert.ok(!cb(one).some((c) => c.startsWith("pv:pg")));

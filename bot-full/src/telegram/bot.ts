@@ -22,7 +22,8 @@ import { searchPools, listLivePositions, getActiveBin } from "../engine/dlmm-rea
 import { buildAddLiquidityTxs, buildClaimFeeTxs, buildRemoveAndCloseTxs, binsFromPct } from "../engine/dlmm-build.js";
 import { getBalances } from "../engine/connection.js";
 import { getSolUsd } from "../engine/prices.js";
-import { createConfirm, takeAwaiting, markConfirm, cancelConfirm } from "../engine/confirm.js";
+import { createConfirm, takeAwaiting, markConfirm, cancelConfirm, renewConfirm, expiredAction } from "../engine/confirm.js";
+import { resolvePosition } from "./positions-view.js";
 import { assertUsdCap, executePendingTxs } from "../engine/executor.js";
 import { listStrategies, requireStrategy } from "../strategies/index.js";
 import { getSwapQuote, buildSwapTx, uiAmountToAtomic, normalizeMint } from "../engine/jupiter-swap.js";
@@ -164,16 +165,36 @@ export function createBot(): Bot {
     const id = ctx.match![2];
     const req = takeAwaiting(id);
     if (!req) {
-      await ctx.editMessageText("Konfirmasi tidak ditemukan / sudah diproses.");
+      await ctx.editMessageText("Konfirmasi lama / sudah diproses — buka 📊 Positions lagi.", {
+        reply_markup: new InlineKeyboard().text("📊 Positions", "pv:lref"),
+      });
       return;
     }
     if (req.status === "expired" || Date.now() > req.expiresAt) {
       markConfirm(id, "expired");
-      if (req.purpose === "add") {
-        await ctx.editMessageText("⏰ Konfirmasi kadaluarsa (60 detik). Panel Add masih ada — tekan 🚀 Deploy lagi.");
+      if (!yes) {
+        await ctx.editMessageText("❌ Dibatalkan.");
         return;
       }
-      await ctx.editMessageText("⏰ Konfirmasi kadaluarsa (batas 60 detik). Ulangi perintah.");
+      const fresh = expiredAction(req);
+      if (fresh.kind === "add") {
+        await ctx.editMessageText("⏰ Waktu habis — harga bisa berubah. Tekan 👀 Preview di panel Add untuk konfirmasi baru.");
+        return;
+      }
+      if (fresh.kind === "zapout") {
+        // re-analyze with fresh amounts, then a new confirm
+        const r = await resolvePosition(ctx, fresh.position).catch(() => null);
+        if (!r) return void (await ctx.editMessageText("Posisi sudah tertutup."));
+        await ctx.editMessageText("⏰ Waktu habis — menyiapkan konfirmasi baru…");
+        return onZapoutPos(ctx, r.index);
+      }
+      if (fresh.kind === "renew") {
+        const n = renewConfirm(req);
+        await ctx.editMessageText("⏰ Waktu habis — konfirmasi baru ⬇️");
+        await presentConfirm(ctx, n.summary, n.id);
+        return;
+      }
+      await ctx.editMessageText("⏰ Konfirmasi kadaluarsa (60 detik). Ulangi perintah.");
       await replyMenu(ctx);
       return;
     }
@@ -210,7 +231,7 @@ export function createBot(): Bot {
     const i = Number(ctx.match![2]);
     const s = getSession(chatKey(ctx));
     const p = s.data.posList?.[i];
-    if (!p) return void (await ctx.reply("Daftar kadaluarsa — /positions dulu."));
+    if (!p) return void (await ctx.reply("Menu lama — buka 📊 Positions lagi.", { reply_markup: new InlineKeyboard().text("📊 Positions", "pv:lref") }));
     try {
       const summary = [
         kind === "claim" ? "Claim fees" : "Remove 100% + close",

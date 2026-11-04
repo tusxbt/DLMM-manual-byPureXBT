@@ -59,7 +59,7 @@ export async function onReshapePos(ctx: Context, index: number): Promise<void> {
   const s = getSession(chatKey(ctx));
   const p = s.data.posList?.[index];
   if (!p) {
-    await ctx.reply("Daftar kadaluarsa — /reshape lagi.");
+    await ctx.reply("Menu lama — buka 📊 Positions lagi.", { reply_markup: new InlineKeyboard().text("📊 Positions", "pv:lref") });
     return;
   }
   try {

@@ -76,6 +76,12 @@ export function cancelConfirm(id: string): boolean {
   return true;
 }
 
+/** Re-issue an expired confirm with the same purpose/summary/payload and a fresh TTL. */
+export function renewConfirm(old: ConfirmRequest): ConfirmRequest {
+  if (old.status === "awaiting") old.status = "expired";
+  return createConfirm({ purpose: old.purpose, summary: old.summary, payload: old.payload });
+}
+
 export function takeAwaiting(id: string): ConfirmRequest | null {
   const r = getConfirm(id);
   if (!r) return null;
@@ -108,4 +114,21 @@ export function resetConfirmStoreForTests(): void {
 export function listAwaiting(): ConfirmRequest[] {
   purge();
   return [...store.values()].filter((r) => r.status === "awaiting" && r.userId === currentUser()?.userId);
+}
+
+/**
+ * What to do when an expired confirm is tapped (never dead-end):
+ * - claim/remove (txs built at execute time) → renew same confirm
+ * - zapout (amounts quoted at analysis) → re-analyze position
+ * - add (prices/bins quoted) → back to panel Preview
+ */
+export function expiredAction(r: Pick<ConfirmRequest, "purpose" | "payload">):
+  | { kind: "renew" }
+  | { kind: "zapout"; position: string }
+  | { kind: "add" }
+  | { kind: "none" } {
+  if (r.purpose === "claim" || r.purpose === "remove") return { kind: "renew" };
+  if (r.purpose === "zapout" && typeof r.payload.position === "string") return { kind: "zapout", position: r.payload.position };
+  if (r.purpose === "add") return { kind: "add" };
+  return { kind: "none" };
 }

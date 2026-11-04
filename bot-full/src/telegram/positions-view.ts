@@ -104,19 +104,19 @@ export function renderPositionCard(p: PositionCard, now = new Date()): string {
   return out.filter((x): x is string => x !== null).join("\n");
 }
 
-export function positionKeyboard(i: number): InlineKeyboard {
+export function positionKeyboard(addr: string): InlineKeyboard {
   return new InlineKeyboard()
-    .text("🚪 Exit", `pv:exit:${i}`)
-    .text("💰 Claim fees", `pv:claim:${i}`)
+    .text("🚪 Exit", `pv:exit:${addr}`)
+    .text("💰 Claim fees", `pv:claim:${addr}`)
     .row()
-    .text("⚡ → SOL", `pv:zap:${i}`)
-    .text("♻️ Reposition", `pv:repo:${i}`)
+    .text("⚡ → SOL", `pv:zap:${addr}`)
+    .text("♻️ Reposition", `pv:repo:${addr}`)
     .row()
-    .text("🔀 Flip", `pv:flip:${i}`)
-    .text("📈 Card", `pv:card:${i}`)
+    .text("🔀 Flip", `pv:flip:${addr}`)
+    .text("📈 Card", `pv:card:${addr}`)
     .row()
     .text("← Positions", "pv:list")
-    .text("🔄 Refresh", `pv:ref:${i}`);
+    .text("🔄 Refresh", `pv:ref:${addr}`);
 }
 
 const pairCache = new Map<string, string>();
@@ -208,7 +208,7 @@ export function renderPositionList(cards: PositionCard[], page: number, autoBadg
   );
   const kb = new InlineKeyboard();
   cards.slice(pg * PAGE_SIZE, pg * PAGE_SIZE + PAGE_SIZE).forEach((c, j) => {
-    kb.text(positionButtonLabel(c), `pv:open:${pg * PAGE_SIZE + j}`).row();
+    kb.text(positionButtonLabel(c), `pv:open:${c.position}`).row();
   });
   if (pages > 1) {
     if (pg > 0) kb.text("◀", `pv:pg:${pg - 1}`);
@@ -297,43 +297,47 @@ export function registerPositionsView(bot: Bot): void {
     await ctx.answerCallbackQuery();
     await showPositionCards(ctx, { refetch: false, page: Number(ctx.match![1]) });
   });
-  bot.callbackQuery(/^pv:open:(\d+)$/, async (ctx) => {
+  bot.callbackQuery(/^pv:open:([1-9A-HJ-NP-Za-km-z]{32,44})$/, async (ctx) => {
     await ctx.answerCallbackQuery();
-    const i = Number(ctx.match![1]);
-    const p = (getSession(key(ctx)).data.posList as unknown as PositionCard[] | undefined)?.[i];
-    if (!p) return showPositionCards(ctx, { refetch: true });
-    await editOrReply(ctx, ctx.callbackQuery.message?.message_id, renderPositionCard(p), positionKeyboard(i));
+    const r = await resolvePosition(ctx, ctx.match![1]);
+    if (!r) return void (await editOrReply(ctx, ctx.callbackQuery.message?.message_id, "Posisi sudah tertutup / tidak ditemukan.", new InlineKeyboard().text("📊 Positions", "pv:lref")));
+    await editOrReply(ctx, ctx.callbackQuery.message?.message_id, renderPositionCard(r.p), positionKeyboard(r.p.position));
   });
 
-  bot.callbackQuery(/^pv:(exit|claim|zap|repo|flip|ref|card):(\d+)$/, async (ctx) => {
+  // Legacy index-based buttons (old messages): send to a fresh list instead of dead-ending.
+  bot.callbackQuery(/^pv:(open|exit|claim|zap|repo|flip|ref|card):(\d+)$/, async (ctx) => {
+    await ctx.answerCallbackQuery({ text: "Menu lama — memuat ulang…" });
+    await showPositionCards(ctx, { refetch: true });
+  });
+
+  bot.callbackQuery(/^pv:(exit|claim|zap|repo|flip|ref|card):([1-9A-HJ-NP-Za-km-z]{32,44})$/, async (ctx) => {
     const action = ctx.match![1];
-    const i = Number(ctx.match![2]);
-    const s = getSession(key(ctx));
-    const p = s.data.posList?.[i] as unknown as PositionCard | undefined;
-    if (!p) {
-      await ctx.answerCallbackQuery({ text: "Daftar kadaluarsa — buka 📊 Positions lagi." });
+    const addr = ctx.match![2];
+    const refetch = action === "ref";
+    if (refetch) await ctx.answerCallbackQuery({ text: "Refresh…" });
+    let r: Resolved | null;
+    try {
+      r = await resolvePosition(ctx, addr, refetch);
+    } catch (e) {
+      if (!refetch) await ctx.answerCallbackQuery();
+      await ctx.reply(`❌ ${redactSecrets((e as Error).message)}`);
       return;
     }
-    if (action === "ref") {
-      await ctx.answerCallbackQuery({ text: "Refresh…" });
+    if (!r) {
+      if (!refetch) await ctx.answerCallbackQuery({ text: "Posisi sudah tertutup." });
       try {
-        const cards = await loadCards();
-        const idx = cards.findIndex((c) => c.position === p.position);
-        s.data.posList = cards as unknown as Array<Record<string, unknown>>;
-        if (idx < 0) {
-          await ctx.editMessageText(`${p.pair} ${shortAddr(p.position)} — posisi sudah tertutup.`);
-          return;
-        }
-        try {
-          await ctx.editMessageText(renderPositionCard(cards[idx]), {
-            reply_markup: positionKeyboard(idx),
-            link_preview_options: { is_disabled: true },
-          });
-        } catch (e) {
-          if (!/not modified/i.test(String((e as Error).message))) throw e;
-        }
+        await ctx.editMessageText(`${shortAddr(addr)} — posisi sudah tertutup.`, { reply_markup: new InlineKeyboard().text("📊 Positions", "pv:lref") });
+      } catch {
+        /* ignore */
+      }
+      return;
+    }
+    const { p, index } = r;
+    if (action === "ref") {
+      try {
+        await ctx.editMessageText(renderPositionCard(p), { reply_markup: positionKeyboard(p.position), link_preview_options: { is_disabled: true } });
       } catch (e) {
-        await ctx.reply(`❌ ${redactSecrets((e as Error).message)}`);
+        if (!/not modified/i.test(String((e as Error).message))) await ctx.reply(`❌ ${redactSecrets((e as Error).message)}`);
       }
       return;
     }
@@ -343,9 +347,28 @@ export function registerPositionsView(bot: Bot): void {
       return;
     }
     await ctx.answerCallbackQuery();
-    if (action === "zap") return onZapoutPos(ctx, i);
-    if (action === "flip") return onReshapePos(ctx, i);
+    if (action === "zap") return onZapoutPos(ctx, index);
+    if (action === "flip") return onReshapePos(ctx, index);
     const c = confirmFor(action === "claim" ? "claim" : "remove", p, action === "repo");
     await presentConfirm(ctx, c.text, c.id);
   });
+}
+
+type Resolved = { p: PositionCard; index: number };
+
+/**
+ * Find a position by address: session cache first, else reload from chain (buttons never expire —
+ * survives bot restarts / session resets). Keeps session.posList in sync so index-based
+ * zapout/reshape handlers work.
+ */
+export async function resolvePosition(ctx: Context, addr: string, refetch = false, load: () => Promise<PositionCard[]> = loadCards): Promise<Resolved | null> {
+  const s = getSession(key(ctx));
+  let cards = s.data.posList as unknown as PositionCard[] | undefined;
+  let index = !refetch && cards ? cards.findIndex((c) => c.position === addr) : -1;
+  if (index < 0) {
+    cards = await load();
+    s.data.posList = cards as unknown as Array<Record<string, unknown>>;
+    index = cards.findIndex((c) => c.position === addr);
+  }
+  return index < 0 || !cards ? null : { p: cards[index], index };
 }

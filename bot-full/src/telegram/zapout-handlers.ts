@@ -57,7 +57,7 @@ export async function onZapoutPos(ctx: Context, index: number): Promise<void> {
   const s = getSession(chatKey(ctx));
   const p = s.data.posList?.[index];
   if (!p) {
-    await ctx.reply("Daftar kadaluarsa — /zapout lagi.");
+    await ctx.reply("Menu lama — buka 📊 Positions lagi.", { reply_markup: new InlineKeyboard().text("📊 Positions", "pv:lref") });
     return;
   }
   const cfg = loadConfig({ requireTelegram: false, skipWallet: true });
