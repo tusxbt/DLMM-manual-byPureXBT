@@ -10,7 +10,13 @@ import { InlineKeyboard, Keyboard, type Bot, type Context } from "grammy";
 import { loadConfig, CONFIRM_TTL_MS, SOL_MINT } from "../config.js";
 import { fmtNum, fmtUsd, shortAddr } from "../format.js";
 import { redactSecrets } from "../logger.js";
-import { getSession, resetSession } from "./session.js";
+import { getSession, resetSession, RETRY } from "./session.js";
+
+/** Show the error in place and keep waiting for another typed value. */
+const retry = async (p: Promise<unknown>): Promise<typeof RETRY> => {
+  await p;
+  return RETRY;
+};
 import { confirmKeyboard, mainMenuKeyboard } from "./menus.js";
 import { loadSettings, saveSettings, type Settings } from "../store/settings.js";
 import { searchPools, getActiveBin } from "../engine/dlmm-read.js";
@@ -346,12 +352,12 @@ export function registerAddPanel(bot: Bot): void {
         if (p.side === "two_sided") {
           const [a, b] = text.trim().replace(/,/g, ".").split(/\s+/).map(Number);
           if (!Number.isFinite(a) || a < 0 || !Number.isFinite(b ?? 0) || (b ?? 0) < 0)
-            return renderAddPanel(ctx, "Format Double: <sol> <token>, contoh 0.5 1000");
+            return retry(renderAddPanel(ctx, "Format Double: <sol> <token>, contoh 0.5 1000"));
           p.amountSol = a;
           p.amountToken = b ?? 0;
         } else {
           const n = parsePositiveNumber(text);
-          if (n == null) return renderAddPanel(ctx, "Nominal tidak valid.");
+          if (n == null) return retry(renderAddPanel(ctx, "Nominal tidak valid."));
           if (p.side === "one_sided_sol") p.amountSol = n;
           else p.amountToken = n;
         }
@@ -430,9 +436,9 @@ export function registerAddPanel(bot: Bot): void {
           s.awaitingText = async (text) => {
             await deleteUserMsg(ctx);
             const b = parseBins(text);
-            if (!b) return renderAddPanel(ctx, "Format bins: <bawah> <atas>, contoh 40 2");
+            if (!b) return retry(renderAddPanel(ctx, "Format bins: <bawah> <atas>, contoh 40 2"));
             if (b.below + b.above > MAX_BINS_PER_POSITION)
-              return renderAddPanel(ctx, `⛔ Total ${b.below + b.above} bins > ${MAX_BINS_PER_POSITION}. Kecilkan.`);
+              return retry(renderAddPanel(ctx, `⛔ Total ${b.below + b.above} bins > ${MAX_BINS_PER_POSITION}. Kecilkan.`));
             panelOf(ctx).range = { kind: "bins", below: b.below, above: b.above };
             await renderAddPanel(ctx);
           };
@@ -449,7 +455,7 @@ export function registerAddPanel(bot: Bot): void {
             await deleteUserMsg(ctx);
             const cur = panelOf(ctx);
             const r = parsePctRange(text, cur.side);
-            if ("error" in r) return renderAddPanel(ctx, `⛔ ${r.error}`);
+            if ("error" in r) return retry(renderAddPanel(ctx, `⛔ ${r.error}`));
             cur.range = { kind: "pct", ...r };
             await renderAddPanel(ctx);
           };
@@ -465,7 +471,7 @@ export function registerAddPanel(bot: Bot): void {
           s.awaitingText = async (text) => {
             await deleteUserMsg(ctx);
             const r = parsePriceRange(text);
-            if (!r) return renderAddPanel(ctx, "Format harga: <min> <max> (min < max)");
+            if (!r) return retry(renderAddPanel(ctx, "Format harga: <min> <max> (min < max)"));
             panelOf(ctx).range = { kind: "price", min: r.min, max: r.max };
             await renderAddPanel(ctx);
           };
@@ -680,8 +686,8 @@ export function registerSettingsPanel(bot: Bot): void {
       const st = loadSettings();
       const r = applyPresetSlot(st, kind, slot, text);
       if (r.error) {
-        s.data.settingsMsgId = await upsert(ctx, s.data.settingsMsgId, presetSlotsText(st, `❌ ${r.error}`), presetSlotsKb(st));
-        return;
+        s.data.settingsMsgId = await upsert(ctx, s.data.settingsMsgId, presetSlotsText(st, `❌ ${r.error} Ketik lagi.`), presetSlotsKb(st));
+        return RETRY;
       }
       s.awaitingText = null;
       saveSettings(r.settings!);
@@ -708,7 +714,7 @@ export function registerSettingsPanel(bot: Bot): void {
           const raw = text.trim().toLowerCase();
           const n = raw === "auto" ? 0 : Math.floor(Number(raw));
           const max = f === "prio" ? 5_000_000 : 10_000_000;
-          if (!Number.isFinite(n) || n < 0 || n > max) return renderSettings(ctx, `Angka 0–${max}${f === "prio" ? " atau 'auto'" : ""}.`);
+          if (!Number.isFinite(n) || n < 0 || n > max) return retry(renderSettings(ctx, `Angka 0–${max}${f === "prio" ? " atau 'auto'" : ""}.`));
           const st = loadSettings();
           if (f === "prio") st.priorityFeeMicroLamports = n;
           else st.jupPriorityMaxLamports = n;
@@ -717,7 +723,7 @@ export function registerSettingsPanel(bot: Bot): void {
         }
         if (f === "pct") {
           const list = parsePctPresets(text);
-          if (!list) return renderSettings(ctx, "Format: dipisah koma, mis. `50, 70` atau `0-50, -40 +10` (maks 4).");
+          if (!list) return retry(renderSettings(ctx, "Format: dipisah koma, mis. `50, 70` atau `0-50, -40 +10` (maks 4)."));
           const st = loadSettings();
           st.rangePresets = list;
           saveSettings(st);
@@ -725,7 +731,7 @@ export function registerSettingsPanel(bot: Bot): void {
         }
         if (f === "mix") {
           const n = Math.round(Number(text.trim().replace("%", "").split(/[\/\s]/)[0]));
-          if (!Number.isFinite(n) || n < 1 || n > 99) return renderSettings(ctx, "Ketik % BidAsk 1–99 (contoh: 70 → 70/30).");
+          if (!Number.isFinite(n) || n < 1 || n > 99) return retry(renderSettings(ctx, "Ketik % BidAsk 1–99 (contoh: 70 → 70/30)."));
           const st = loadSettings();
           st.mixBidAskPct = n;
           saveSettings(st);
@@ -733,7 +739,7 @@ export function registerSettingsPanel(bot: Bot): void {
         }
         if (f === "bins") {
           const bp = parseBinPresets(text);
-          if (!bp) return renderSettings(ctx, "Format: 3 angka bins 1–1399 (narrow medium wide), contoh: 20 40 69");
+          if (!bp) return retry(renderSettings(ctx, "Format: 3 angka bins 1–1399 (narrow medium wide), contoh: 20 40 69"));
           const st = loadSettings();
           st.binPresets = bp;
           saveSettings(st);
@@ -741,7 +747,7 @@ export function registerSettingsPanel(bot: Bot): void {
         }
         if (f === "presets") {
           const arr = parsePresets(text);
-          if (!arr) return renderSettings(ctx, "Format presets: angka SOL dipisah spasi/koma, max 6. contoh: 0.5 1 2");
+          if (!arr) return retry(renderSettings(ctx, "Format presets: angka SOL dipisah spasi/koma, max 6. contoh: 0.5 1 2"));
           const st = loadSettings();
           st.amountPresets = arr;
           saveSettings(st);

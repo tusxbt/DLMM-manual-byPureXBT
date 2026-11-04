@@ -24,6 +24,8 @@ export type WizardData = {
   settingsMsgId?: number;
   /** waiting for a PnL background photo from this user */
   awaitingBg?: boolean;
+  /** separate bot prompt messages ("ketik …") to delete once the user answers */
+  promptMsgIds?: number[];
   posPage?: number;
 };
 
@@ -48,4 +50,56 @@ export function getSession(chatId: string): Session {
 
 export function resetSession(chatId: string): void {
   sessions.set(k(chatId), { step: null, data: {}, awaitingText: null });
+}
+
+/** Return from an awaitingText handler to keep waiting for another try (invalid input). */
+export const RETRY = Symbol("retry-input");
+
+/** Send a separate prompt message and remember it so it is deleted after the user answers. */
+export async function askPrompt(
+  ctx: { chat?: { id: number }; reply: (t: string, o?: Record<string, unknown>) => Promise<{ message_id: number }> },
+  chatId: string,
+  text: string,
+  opts?: Record<string, unknown>,
+): Promise<void> {
+  const m = await ctx.reply(text, opts);
+  const s = getSession(chatId);
+  (s.data.promptMsgIds ??= []).push(m.message_id);
+}
+
+/**
+ * Run the pending text-input handler for a typed message: delete the user's message and any
+ * separate prompt messages (ignore errors — bots can delete user msgs < 48h in private chats),
+ * keep waiting when the handler returns RETRY. Not counted as a "new message" reset.
+ */
+export async function runAwaitingInput(
+  chatId: string,
+  text: string,
+  api: { deleteMessage: (chat: number | string, id: number) => Promise<unknown> },
+  chat: number | string,
+  userMsgId: number,
+): Promise<boolean> {
+  const s = getSession(chatId);
+  const fn = s.awaitingText;
+  if (!fn) return false;
+  s.awaitingText = null;
+  const del = async (id: number) => {
+    try {
+      await api.deleteMessage(chat, id);
+    } catch {
+      /* ignore: too old / no rights */
+    }
+  };
+  await del(userMsgId);
+  const prompts = s.data.promptMsgIds ?? [];
+  s.data.promptMsgIds = [];
+  let r: unknown;
+  try {
+    r = await fn(text);
+  } finally {
+    // delete old prompts after the handler ran (a handler may send a follow-up prompt; keep that one)
+    for (const id of prompts) await del(id);
+  }
+  if (r === RETRY && !s.awaitingText) s.awaitingText = fn;
+  return true;
 }

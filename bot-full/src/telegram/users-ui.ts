@@ -12,7 +12,7 @@ import { getBalances, getConnection } from "../engine/connection.js";
 import { getSolUsd } from "../engine/prices.js";
 import { loadConfig, CONFIRM_TTL_MS } from "../config.js";
 import { fmtNum, fmtUsd } from "../format.js";
-import { getSession } from "./session.js";
+import { getSession, askPrompt, RETRY } from "./session.js";
 import { createConfirm } from "../engine/confirm.js";
 import { presentConfirm } from "./confirm-ui.js";
 import { assertUsdCap } from "../engine/executor.js";
@@ -95,16 +95,16 @@ export async function buildWithdrawTx(from: PublicKey, to: PublicKey, lamports: 
 
 async function askWithdraw(ctx: Context): Promise<void> {
   const s = getSession(chatKey(ctx));
-  await ctx.reply("📤 Kirim **alamat tujuan** SOL (ketik / paste address). /cancel untuk batal.");
+  await askPrompt(ctx, chatKey(ctx), "📤 Kirim **alamat tujuan** SOL (ketik / paste address). /cancel untuk batal.");
   s.awaitingText = async (addrText: string) => {
     let to: PublicKey;
     try {
       to = new PublicKey(addrText.trim());
     } catch {
-      await ctx.reply("❌ Alamat tidak valid.");
-      return;
+      await askPrompt(ctx, chatKey(ctx), "❌ Alamat tidak valid — kirim lagi.");
+      return RETRY;
     }
-    await ctx.reply("Jumlah SOL? (angka, atau `max`)");
+    await askPrompt(ctx, chatKey(ctx), "Jumlah SOL? (angka, atau `max`)");
     s.awaitingText = async (amtText: string) => {
       try {
         const cfg = loadConfig({ requireTelegram: false, skipWallet: true });
@@ -203,7 +203,7 @@ export function registerUsersUi(bot: Bot): void {
     await ctx.answerCallbackQuery();
     await ownerOnly(ctx, async () => {
       const s = getSession(chatKey(ctx));
-      await ctx.reply("➕ Kirim **Telegram user ID** (angka). /cancel untuk batal.");
+      await askPrompt(ctx, chatKey(ctx), "➕ Kirim **Telegram user ID** (angka). /cancel untuk batal.");
       s.awaitingText = async (t: string) => {
         const id = t.trim();
         try {

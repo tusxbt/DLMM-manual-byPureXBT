@@ -2,7 +2,7 @@ import { presentConfirm } from "./confirm-ui.js";
 import { InlineKeyboard, type Context } from "grammy";
 import { loadConfig, CONFIRM_TTL_MS } from "../config.js";
 import { fmtUsd, shortAddr } from "../format.js";
-import { getSession, resetSession } from "./session.js";
+import { getSession, resetSession, askPrompt, RETRY } from "./session.js";
 import { mainMenuKeyboard, CANCEL_KB, confirmKeyboard } from "./menus.js";
 import { loadTrackedPositions } from "../store/positions.js";
 import { listLivePositions } from "../engine/dlmm-read.js";
@@ -127,13 +127,12 @@ export async function onReshapeWidth(ctx: Context, arg: string): Promise<void> {
     s.awaitingText = async (text) => {
       const n = Number(String(text).trim());
       if (!Number.isInteger(n) || n < 1) {
-        await ctx.reply("Ketik bilangan bulat 1–69:");
-        s.awaitingText = s.awaitingText;
-        return;
+        await askPrompt(ctx, chatKey(ctx), "Ketik bilangan bulat 1–69:");
+        return RETRY;
       }
       await finalizeReshapeConfirm(ctx, clampReshapeWidth(n, analysis.defaultWidth));
     };
-    await ctx.reply("Ketik lebar bin (1–69):", { reply_markup: CANCEL_KB });
+    await askPrompt(ctx, chatKey(ctx), "Ketik lebar bin (1–69):", { reply_markup: CANCEL_KB });
     return;
   }
   const width = clampReshapeWidth(Number(arg), analysis.defaultWidth);

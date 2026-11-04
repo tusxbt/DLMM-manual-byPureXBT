@@ -16,7 +16,7 @@ import { runAsUser, currentUser } from "../users/context.js";
 import { hasWallet } from "../users/store.js";
 import { registerUsersUi, showWallet, allowedWithoutWallet, buildWithdrawTx, ONBOARD_TEXT, onboardKb } from "./users-ui.js";
 import { PublicKey } from "@solana/web3.js";
-import { getSession, resetSession } from "./session.js";
+import { askPrompt, runAwaitingInput, RETRY, getSession, resetSession } from "./session.js";
 import { mainMenuKeyboard, CANCEL_KB, confirmKeyboard, addBackKeyboard } from "./menus.js";
 import { loadSettings } from "../store/settings.js";
 import { addTrackedPosition, loadTrackedPositions, removeTrackedPosition, upsertTrackedPosition, getTrackedPosition } from "../store/positions.js";
@@ -120,7 +120,7 @@ export function createBot(): Bot {
       s.awaitingText = async (text) => {
         await doPools(ctx, text.trim());
       };
-      await ctx.reply("🔍 Kirim mint / query pool:", { reply_markup: CANCEL_KB });
+      await askPrompt(ctx, chatKey(ctx), "🔍 Kirim mint / query pool:", { reply_markup: CANCEL_KB });
       return;
     }
     await doPools(ctx, q);
@@ -154,7 +154,7 @@ export function createBot(): Bot {
       settings: showSettings,
       pools: async (c) => {
         getSession(chatKey(c)).awaitingText = async (text) => doPools(c, text.trim());
-        await c.reply("🔍 Kirim mint / query pool:", { reply_markup: CANCEL_KB });
+        await askPrompt(c, chatKey(c), "🔍 Kirim mint / query pool:", { reply_markup: CANCEL_KB });
       },
     };
     const fn = map[action];
@@ -277,21 +277,21 @@ export function createBot(): Bot {
       s.awaitingText = async (text) => {
         const [a, b] = text.trim().split(/\s+/);
         if (!a || !b) {
-          await ctx.reply("Format: <inputMint> <outputMint>");
-          return;
+          await askPrompt(ctx, chatKey(ctx), "Format: <inputMint> <outputMint>");
+          return RETRY;
         }
         s.data.swapInputMint = normalizeMint(a);
         s.data.swapOutputMint = normalizeMint(b);
         s.awaitingText = async (amt) => {
           await finishSwapAmount(ctx, amt);
         };
-        await ctx.reply("Ketik amount (UI) untuk input mint:");
+        await askPrompt(ctx, chatKey(ctx), "Ketik amount (UI) untuk input mint:");
       };
-      await ctx.reply("Ketik: <inputMint> <outputMint>");
+      await askPrompt(ctx, chatKey(ctx), "Ketik: <inputMint> <outputMint>");
       return;
     }
     s.awaitingText = async (amt) => finishSwapAmount(ctx, amt);
-    await ctx.reply("Ketik amount (UI) yang akan di-swap:");
+    await askPrompt(ctx, chatKey(ctx), "Ketik amount (UI) yang akan di-swap:");
   });
 
 
@@ -325,12 +325,8 @@ export function createBot(): Bot {
       if (kbAction === "wallet") return showWallet(ctx);
       return showSettings(ctx);
     }
-    if (s.awaitingText) {
-      const fn = s.awaitingText;
-      s.awaitingText = null;
-      await fn(ctx.message.text);
-      return;
-    }
+    // typed answer to a pending prompt: handled + user msg & prompt deleted (not a menu reset)
+    if (await runAwaitingInput(chatKey(ctx), ctx.message.text, ctx.api, ctx.chat.id, ctx.message.message_id)) return;
     const t = ctx.message.text.trim();
     const mint = detectMintAddress(t);
     if (mint) {
