@@ -285,3 +285,9 @@ export function renderPnlCard(d: PnlCardData): Buffer {
   ctx.textAlign = "left";
   return c.toBuffer("image/png");
 }
+
+/** Register bundled card fonts (Manrope / Space Grotesk) for other renderers. */
+export function ensureCardFonts(): void {
+  ensureFonts();
+  ensureThin();
+}

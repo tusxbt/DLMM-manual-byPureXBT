@@ -113,7 +113,25 @@ export type LivePosition = {
   amount_y?: number;
   /** per-bin liquidity mask min_bin..max_bin ('1' = has X or Y, '0' = empty) */
   bin_mask?: string;
+  /** per-bin amounts (UI units) for the bins chart */
+  bins?: BinAmt[];
+  /** USD price per token X / Y at read time (null if unknown) */
+  px_usd?: number | null;
+  py_usd?: number | null;
 };
+
+export type BinAmt = { id: number; x: number; y: number };
+
+export function binAmountsFrom(data: unknown[] | undefined, decX: number, decY: number): BinAmt[] | undefined {
+  if (!Array.isArray(data)) return undefined;
+  const out: BinAmt[] = [];
+  for (const raw of data) {
+    const b = raw as { binId?: number; positionXAmount?: unknown; positionYAmount?: unknown };
+    if (b.binId == null) continue;
+    out.push({ id: b.binId, x: Number(String(b.positionXAmount ?? "0")) / 10 ** decX, y: Number(String(b.positionYAmount ?? "0")) / 10 ** decY });
+  }
+  return out.sort((a, b) => a.id - b.id);
+}
 
 /** Build '1'/'0' mask from SDK positionBinData (binId + positionXAmount/positionYAmount). */
 export function binMaskFrom(data: unknown[] | undefined, minBin?: number, maxBin?: number): string | undefined {
@@ -164,6 +182,7 @@ export async function listLivePositions(costByPosition: Record<string, number> =
     decX: number;
     decY: number;
     mask?: string;
+    bins?: BinAmt[];
   };
   const raws: Raw[] = [];
 
@@ -225,6 +244,7 @@ export async function listLivePositions(costByPosition: Record<string, number> =
         decX,
         decY,
         mask: binMaskFrom(pd.positionBinData, minBin, maxBin),
+        bins: binAmountsFrom(pd.positionBinData, decX, decY),
       });
     }
   }
@@ -260,6 +280,9 @@ export async function listLivePositions(costByPosition: Record<string, number> =
       min_bin: r.minBin,
       max_bin: r.maxBin,
       bin_mask: r.mask,
+      bins: r.bins,
+      px_usd: px > 0 ? px : null,
+      py_usd: py > 0 ? py : null,
       amount_x: r.totalX,
       amount_y: r.totalY,
     };

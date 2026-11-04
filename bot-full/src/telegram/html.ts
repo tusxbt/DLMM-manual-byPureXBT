@@ -49,6 +49,10 @@ export function installHtml(bot: Bot): void {
       p.parse_mode = "HTML";
       p.link_preview_options ??= { is_disabled: true };
     }
+    if (method === "editMessageMedia" && p.media && typeof p.media.caption === "string" && !p.media.parse_mode) {
+      p.media.caption = toHtml(p.media.caption);
+      p.media.parse_mode = "HTML";
+    }
     if (CAPTION_METHODS.has(method) && typeof p.caption === "string" && !p.parse_mode) {
       p.caption = toHtml(p.caption);
       p.parse_mode = "HTML";

@@ -10,7 +10,8 @@ import { presentConfirm, isAutoConfirm, AUTO_BADGE } from "./confirm-ui.js";
  * Positions view: one card message per DLMM position, edit-in-place refresh,
  * all actions routed through the existing Confirm/Cancel gate.
  */
-import { InlineKeyboard, type Bot, type Context } from "grammy";
+import { InlineKeyboard, InputFile, type Bot, type Context } from "grammy";
+import { renderBinsChart } from "../render/bins-chart.js";
 import { loadConfig, CONFIRM_TTL_MS } from "../config.js";
 import { fmtUsd, shortAddr, strategyLabel } from "../format.js";
 import { redactSecrets } from "../logger.js";
@@ -350,13 +351,78 @@ function confirmFor(kind: "claim" | "remove", p: PositionCard, reposition: boole
   return { text: summary, id: req.id };
 }
 
+
+/** Bins chart PNG for a live position, or null when per-bin data is unavailable. */
+export function binsChartFor(p: LivePosition): Buffer | null {
+  if (!p.bins?.length || p.min_bin == null || p.max_bin == null) return null;
+  const step = p.bin_step ?? 0;
+  const minPx = p.min_price ?? null;
+  const [sx, sy] = (p.pair ?? "Token/SOL").split("/");
+  try {
+    return renderBinsChart({
+      pair: p.pair ?? "Pool",
+      symX: sx,
+      symY: sy,
+      minBin: p.min_bin,
+      maxBin: p.max_bin,
+      activeId: p.active_id ?? null,
+      bins: p.bins,
+      pxUsd: p.px_usd ?? null,
+      pyUsd: p.py_usd ?? null,
+      priceOf: (id) => (minPx != null && step > 0 ? minPx * (1 + step / 10000) ** (id - p.min_bin!) : null),
+    });
+  } catch {
+    return null;
+  }
+}
+
+const capFit = (t: string) => (t.length <= 1000 ? t : t.slice(0, 990) + "…");
+
+/** Show Detail as one photo message (chart + caption card + buttons). Falls back to text. */
+export async function showPositionDetail(ctx: Context, p: LivePosition): Promise<void> {
+  const msg = ctx.callbackQuery?.message;
+  const kb = positionKeyboard(p.position);
+  const caption = capFit(renderPositionCard(p));
+  const png = binsChartFor(p);
+  if (!png) {
+    if (msg && "photo" in msg && msg.photo) {
+      await ctx.api.deleteMessage(msg.chat.id, msg.message_id).catch(() => undefined);
+      await ctx.reply(renderPositionCard(p), { reply_markup: kb });
+    } else await editOrReply(ctx, msg?.message_id, renderPositionCard(p), kb);
+    return;
+  }
+  const file = new InputFile(png, "bins.png");
+  if (msg && "photo" in msg && msg.photo) {
+    try {
+      await ctx.editMessageMedia({ type: "photo", media: file, caption }, { reply_markup: kb });
+      return;
+    } catch (e) {
+      if (/not modified/i.test(String((e as Error).message))) return;
+    }
+  }
+  await ctx.replyWithPhoto(file, { caption, reply_markup: kb });
+  if (msg) await ctx.api.deleteMessage(msg.chat.id, msg.message_id).catch(() => undefined);
+}
+
+/** Leaving a photo Detail: delete it so the list can be sent as text. */
+async function dropPhoto(ctx: Context): Promise<boolean> {
+  const msg = ctx.callbackQuery?.message;
+  if (msg && "photo" in msg && msg.photo) {
+    await ctx.api.deleteMessage(msg.chat.id, msg.message_id).catch(() => undefined);
+    return true;
+  }
+  return false;
+}
+
 export function registerPositionsView(bot: Bot): void {
   bot.callbackQuery("pv:list", async (ctx) => {
     await ctx.answerCallbackQuery();
+    await dropPhoto(ctx);
     await showPositionCards(ctx, { refetch: false });
   });
   bot.callbackQuery("pv:lref", async (ctx) => {
     await ctx.answerCallbackQuery({ text: "Refresh…" });
+    await dropPhoto(ctx);
     await showPositionCards(ctx, { refetch: true });
   });
   bot.callbackQuery("pv:noop", (ctx) => ctx.answerCallbackQuery());
@@ -368,7 +434,7 @@ export function registerPositionsView(bot: Bot): void {
     await ctx.answerCallbackQuery();
     const r = await resolvePosition(ctx, ctx.match![1]);
     if (!r) return void (await editOrReply(ctx, ctx.callbackQuery.message?.message_id, "Posisi sudah tertutup / tidak ditemukan.", new InlineKeyboard().text("📊 Positions", "pv:lref")));
-    await editOrReply(ctx, ctx.callbackQuery.message?.message_id, renderPositionCard(r.p), positionKeyboard(r.p.position));
+    await showPositionDetail(ctx, r.p);
   });
 
   // Legacy index-based buttons (old messages): send to a fresh list instead of dead-ending.
@@ -393,7 +459,8 @@ export function registerPositionsView(bot: Bot): void {
     if (!r) {
       if (!refetch) await ctx.answerCallbackQuery({ text: "Posisi sudah tertutup." });
       try {
-        await ctx.editMessageText(`${shortAddr(addr)} — posisi sudah tertutup.`, { reply_markup: new InlineKeyboard().text("📊 Positions", "pv:lref") });
+        if (await dropPhoto(ctx)) await ctx.reply(`${shortAddr(addr)} — posisi sudah tertutup.`, { reply_markup: new InlineKeyboard().text("📊 Positions", "pv:lref") });
+        else await ctx.editMessageText(`${shortAddr(addr)} — posisi sudah tertutup.`, { reply_markup: new InlineKeyboard().text("📊 Positions", "pv:lref") });
       } catch {
         /* ignore */
       }
@@ -402,7 +469,7 @@ export function registerPositionsView(bot: Bot): void {
     const { p, index } = r;
     if (action === "ref") {
       try {
-        await ctx.editMessageText(renderPositionCard(p), { reply_markup: positionKeyboard(p.position), link_preview_options: { is_disabled: true } });
+        await showPositionDetail(ctx, p);
       } catch (e) {
         if (!/not modified/i.test(String((e as Error).message))) await ctx.reply(`❌ ${redactSecrets((e as Error).message)}`);
       }
