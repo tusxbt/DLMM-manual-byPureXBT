@@ -49,3 +49,32 @@ test("age + keyboard", () => {
   for (const cb of ["pv:exit:2", "pv:claim:2", "pv:zap:2", "pv:repo:2", "pv:flip:2", "pv:ref:2", "pv:list"]) assert.ok(kb.includes(cb), cb);
   assert.ok(positionKeyboard(0).inline_keyboard.every((r) => r.length <= 2));
 });
+
+import { renderPositionList, positionButtonLabel, PAGE_SIZE } from "../src/telegram/positions-view.js";
+
+const mk = (i: number, o: Record<string, unknown> = {}) =>
+  ({ position: `P${i}`, pool: "X", pair: "BCAT/SOL", total_value_usd: 100 + i, unclaimed_fees_usd: 1, pnl_usd: null, pnl_pct: null, in_range: true, ...o }) as never;
+
+test("button label: range dot, value, PnL omitted when n/a", () => {
+  assert.equal(positionButtonLabel(mk(23)), "🟢 BCAT/SOL $123");
+  assert.equal(positionButtonLabel(mk(23, { in_range: false, pnl_pct: 4.04, pnl_usd: 5 })), "🔴 BCAT/SOL $123 +4.0%");
+  assert.equal(positionButtonLabel(mk(0, { pnl_pct: -12.3, pnl_usd: -1 })), "🟢 BCAT/SOL $100 −12%");
+});
+
+test("list: one message, totals, paginated by 8", () => {
+  const cards = Array.from({ length: 19 }, (_, i) => mk(i));
+  const r0 = renderPositionList(cards, 0, true);
+  assert.match(r0.text, /📊 19 posisi DLMM/);
+  assert.match(r0.text, /Auto confirm close ON/);
+  assert.match(r0.text, /Hal 1\/3/);
+  const cb = (r: ReturnType<typeof renderPositionList>) => r.kb.inline_keyboard.flat().map((b) => (b as { callback_data: string }).callback_data);
+  assert.equal(cb(r0).filter((c) => c.startsWith("pv:open:")).length, PAGE_SIZE);
+  assert.ok(cb(r0).includes("pv:pg:1") && !cb(r0).includes("pv:pg:-1") && cb(r0).includes("pv:lref"));
+  const r2 = renderPositionList(cards, 99);
+  assert.equal(r2.page, 2);
+  assert.deepEqual(cb(r2).filter((c) => c.startsWith("pv:open:")), ["pv:open:16", "pv:open:17", "pv:open:18"]);
+  assert.ok(cb(r2).includes("pv:pg:1") && !cb(r2).includes("pv:pg:3"));
+  const one = renderPositionList([mk(1)], 0);
+  assert.ok(!cb(one).some((c) => c.startsWith("pv:pg")));
+  assert.match(renderPositionList([], 0).text, /Tidak ada posisi/);
+});

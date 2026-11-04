@@ -22,6 +22,7 @@ export type WizardData = {
   panel?: AddPanelState;
   panelMsgId?: number;
   settingsMsgId?: number;
+  posPage?: number;
 };
 
 export type Session = {

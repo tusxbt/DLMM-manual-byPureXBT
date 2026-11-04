@@ -137,29 +137,79 @@ async function loadCards(): Promise<PositionCard[]> {
   return out;
 }
 
-export async function showPositionCards(ctx: Context): Promise<void> {
-  const loading = await ctx.reply("⏳ Loading positions DLMM…");
-  try {
-    const cards = await loadCards();
-    const s = getSession(key(ctx));
-    s.data.posList = cards as unknown as Array<Record<string, unknown>>;
-    if (!cards.length) {
-      await ctx.api.editMessageText(ctx.chat!.id, loading.message_id, "Tidak ada posisi DLMM terbuka.");
+export const PAGE_SIZE = 8;
+
+export function positionButtonLabel(p: PositionCard): string {
+  const dot = p.in_range == null ? "⚪" : p.in_range ? "🟢" : "🔴";
+  const pnl = p.pnl_pct == null ? "" : ` ${p.pnl_pct >= 0 ? "+" : "−"}${Math.abs(p.pnl_pct).toFixed(p.pnl_pct !== 0 && Math.abs(p.pnl_pct) < 10 ? 1 : 0)}%`;
+  const pair = (p.pair || "TOKEN/SOL").slice(0, 16);
+  return `${dot} ${pair} $${Math.round(p.total_value_usd)}${pnl}`;
+}
+
+export function renderPositionList(cards: PositionCard[], page: number, autoBadge = false): { text: string; kb: InlineKeyboard; page: number } {
+  const pages = Math.max(1, Math.ceil(cards.length / PAGE_SIZE));
+  const pg = Math.min(pages - 1, Math.max(0, page));
+  const total = cards.reduce((a, c) => a + (c.total_value_usd || 0), 0);
+  const fees = cards.reduce((a, c) => a + (c.unclaimed_fees_usd || 0), 0);
+  const inR = cards.filter((c) => c.in_range).length;
+  const text = [
+    `📊 ${cards.length} posisi DLMM`,
+    autoBadge ? `${AUTO_BADGE} — 🚪 Exit & ⚡ → SOL tanpa Confirm` : null,
+    "",
+    `💼 Total value: ${fmtUsd(total)}`,
+    `💵 Fee berjalan: ${fmtUsd(fees)}`,
+    `🟢 ${inR} in-range · 🔴 ${cards.length - inR} out`,
+    pages > 1 ? `Hal ${pg + 1}/${pages}` : null,
+    "",
+    cards.length ? "Pilih posisi:" : "Tidak ada posisi DLMM terbuka.",
+    `🕐 updated ${kstTime()} (KST)`,
+  ]
+    .filter((x) => x !== null)
+    .join("\n");
+  const kb = new InlineKeyboard();
+  cards.slice(pg * PAGE_SIZE, pg * PAGE_SIZE + PAGE_SIZE).forEach((c, j) => {
+    kb.text(positionButtonLabel(c), `pv:open:${pg * PAGE_SIZE + j}`).row();
+  });
+  if (pages > 1) {
+    if (pg > 0) kb.text("◀", `pv:pg:${pg - 1}`);
+    kb.text(`${pg + 1}/${pages}`, "pv:noop");
+    if (pg < pages - 1) kb.text("▶", `pv:pg:${pg + 1}`);
+    kb.row();
+  }
+  kb.text("🔄 Refresh", "pv:lref").text("🏠 Home", "menu:cancel");
+  return { text, kb, page: pg };
+}
+
+async function editOrReply(ctx: Context, msgId: number | undefined, text: string, kb: InlineKeyboard): Promise<void> {
+  const opts = { reply_markup: kb, link_preview_options: { is_disabled: true } };
+  if (msgId) {
+    try {
+      await ctx.api.editMessageText(ctx.chat!.id, msgId, text, opts);
       return;
+    } catch (e) {
+      if (/not modified/i.test(String((e as Error).message))) return;
     }
-    await ctx.api.editMessageText(
-      ctx.chat!.id,
-      loading.message_id,
-      `📊 ${cards.length} posisi DLMM:${isAutoConfirm() ? `\n${AUTO_BADGE} — 🚪 Exit & ⚡ → SOL tanpa Confirm` : ""}`,
-    );
-    for (let i = 0; i < cards.length; i++) {
-      await ctx.reply(renderPositionCard(cards[i]), {
-        reply_markup: positionKeyboard(i),
-        link_preview_options: { is_disabled: true },
-      });
+  }
+  await ctx.reply(text, opts);
+}
+
+/** Single-message positions list. From a callback it edits that message; from a command it sends one. */
+export async function showPositionCards(ctx: Context, opts: { refetch?: boolean; page?: number } = {}): Promise<void> {
+  const s = getSession(key(ctx));
+  let msgId = ctx.callbackQuery?.message?.message_id;
+  try {
+    let cards = s.data.posList as unknown as PositionCard[] | undefined;
+    if (!cards || opts.refetch !== false) {
+      if (!msgId) msgId = (await ctx.reply("⏳ Loading positions DLMM…")).message_id;
+      else await editOrReply(ctx, msgId, "⏳ Loading positions DLMM…", new InlineKeyboard());
+      cards = await loadCards();
+      s.data.posList = cards as unknown as Array<Record<string, unknown>>;
     }
+    const r = renderPositionList(cards, opts.page ?? s.data.posPage ?? 0, isAutoConfirm());
+    s.data.posPage = r.page;
+    await editOrReply(ctx, msgId, r.text, r.kb);
   } catch (e) {
-    await ctx.reply(`❌ ${redactSecrets((e as Error).message)}`, { reply_markup: mainMenuKeyboard() });
+    await editOrReply(ctx, msgId, `❌ ${redactSecrets((e as Error).message)}`, mainMenuKeyboard());
   }
 }
 
@@ -192,7 +242,23 @@ function confirmFor(kind: "claim" | "remove", p: PositionCard, reposition: boole
 export function registerPositionsView(bot: Bot): void {
   bot.callbackQuery("pv:list", async (ctx) => {
     await ctx.answerCallbackQuery();
-    await showPositionCards(ctx);
+    await showPositionCards(ctx, { refetch: false });
+  });
+  bot.callbackQuery("pv:lref", async (ctx) => {
+    await ctx.answerCallbackQuery({ text: "Refresh…" });
+    await showPositionCards(ctx, { refetch: true });
+  });
+  bot.callbackQuery("pv:noop", (ctx) => ctx.answerCallbackQuery());
+  bot.callbackQuery(/^pv:pg:(\d+)$/, async (ctx) => {
+    await ctx.answerCallbackQuery();
+    await showPositionCards(ctx, { refetch: false, page: Number(ctx.match![1]) });
+  });
+  bot.callbackQuery(/^pv:open:(\d+)$/, async (ctx) => {
+    await ctx.answerCallbackQuery();
+    const i = Number(ctx.match![1]);
+    const p = (getSession(key(ctx)).data.posList as unknown as PositionCard[] | undefined)?.[i];
+    if (!p) return showPositionCards(ctx, { refetch: true });
+    await editOrReply(ctx, ctx.callbackQuery.message?.message_id, renderPositionCard(p), positionKeyboard(i));
   });
 
   bot.callbackQuery(/^pv:(exit|claim|zap|repo|flip|ref):(\d+)$/, async (ctx) => {
