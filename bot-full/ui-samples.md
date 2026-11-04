@@ -43,39 +43,24 @@ Slippage: 10%
 
 ## Position card
 
-_max line: 23 chars_
+_max line: 43 chars_
 
 ```
-**Donkey/SOL · DLMM**
+**Donkey/SOL** 7b9f…1tcg [Mix 70/30 · 70 bins]
 
-🟢 In range
-Strategi: Mix 70/30
+📊 Value: $49.06
+📈 +$0.91 (+1.88%)
+💵 Fee berjalan: $0.62
 
-**💰 PnL**
-PnL: 🟢 +$0.91 (+1.88%)
-Sumber: Meteora
-Value: $49.06
-Deposit: $48.56
-Fee unclaim: $0.62
-Fee total: $1.03
+📐 0.0₅116–0.0₅425 (now 0.0₅414) Donkey/SOL
+🏷 MC $1.16M–$4.25M (now $4.14M)
+−72% ▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬● +3%
 
-**📐 Range**
-Min: 0.0₅116
-Max: 0.0₅425
-Now: 0.0₅414
-−72% ━━━━━━━━━━━● +3%
-Bins: 70
-MC: $1.16M–$4.25M
-MC now: $4.14M
+🟢 In-range
 
-**ℹ️ Info**
-Umur: 3j 20m
-Update: 00:30:00 KST
-📍 Posisi
-`7b9f6yDvVthv3BXDL6isBWe8gcrbjBVvXrJz7yKV1tcg`
-🏊 Pool
-`5rCf1DM8LjKTw4YqhnoLcngyZYeNnQqztScTogYHAS6`
+🕐 3j 20m · updated 00:30:00 KST
 [Meteora](https://app.meteora.ag/dlmm/5rCf1DM8LjKTw4YqhnoLcngyZYeNnQqztScTogYHAS6) · [Solscan](https://solscan.io/account/7b9f6yDvVthv3BXDL6isBWe8gcrbjBVvXrJz7yKV1tcg)
+`7b9f6yDvVthv3BXDL6isBWe8gcrbjBVvXrJz7yKV1tcg`
 ```
 
 ## Positions list (+ 1 button per posisi)
@@ -90,7 +75,7 @@ Fee: $1.24
 In range: 1/2
 
 Pilih posisi ⬇️
-🕐 00:38:39 KST
+🕐 00:44:15 KST
 ```
 
 ## Close / Zapout result (+ ℹ️ Detail button)

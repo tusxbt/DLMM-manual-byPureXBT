@@ -59,6 +59,6 @@ test("unknown SOL price never passes cap as $0; value n/a shown", () => {
   assert.equal(depositUsd({ ...defaultPanel(), amountSol: 1, solUsd: 100 }), 100);
   const p = { position: "P1", pool: "X", pair: "AMD/SOL", total_value_usd: null, unclaimed_fees_usd: null, pnl_usd: null, pnl_pct: null, in_range: true } as never;
   assert.equal(positionButtonLabel(p), "🟢 AMD/SOL n/a");
-  assert.match(renderPositionCard(p), /Value: n\/a/);
+  assert.match(renderPositionCard(p), /📊 Value: n\/a/);
   assert.doesNotMatch(renderPositionCard(p), /\$0\.00/);
 });

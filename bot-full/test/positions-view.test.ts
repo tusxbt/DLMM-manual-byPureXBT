@@ -14,7 +14,7 @@ test("fmtTinyPrice subscript zeros", () => {
 
 test("rangeBar marks current price", () => {
   const b = rangeBar(0.04, 1.04, 1);
-  assert.match(b, /^−96% ━+●━* \+4%$/);
+  assert.match(b, /^−96% ▬+●▬* \+4%$/);
   assert.match(rangeBar(1, 2, 0.5), /◀/);
   assert.equal(rangeBar(0, 1, 1), "");
 });
@@ -31,17 +31,21 @@ test("card: PnL n/a when cost unknown; real when known", () => {
     min_price: 0.00000116, max_price: 0.00000425, active_price: 0.00000414,
   };
   const t = renderPositionCard(base as never, new Date("2026-11-04T04:25:48Z"));
-  assert.match(t, /\*\*BONK\/SOL · DLMM\*\*/);
-  assert.match(t, /PnL: n\/a/);
-  assert.match(t, /Min: 0\.0₅116/);
-  assert.match(t, /Max: 0\.0₅425/);
-  assert.match(t, /Now: 0\.0₅414/);
-  assert.match(t, /🟢 In range/);
-  assert.match(t, /Update: 13:25:48 KST/);
+  const lines = t.split("\n");
+  assert.equal(lines[0], "**BONK/SOL** Pos1…1111");
+  assert.match(t, /📊 Value: \$899\.68/);
+  assert.match(t, /📈 PnL n\/a/);
+  assert.match(t, /💵 Fee berjalan: \$7\.53/);
+  assert.match(t, /📐 0\.0₅116–0\.0₅425 \(now 0\.0₅414\) BONK\/SOL/);
+  assert.match(t, /🏷 MC n\/a–n\/a \(now n\/a\)/);
+  assert.match(t, /🟢 In-range/);
+  assert.match(t, /🕐 n\/a · updated 13:25:48 KST/);
   assert.match(t, /app\.meteora\.ag\/dlmm\/PoolX/);
-  const t2 = renderPositionCard({ ...base, pnl_usd: 7.21, pnl_pct: 0.8, in_range: false } as never);
-  assert.match(t2, /🟢 \+\$7\.21 \(\+0\.80%\)/);
-  assert.match(t2, /🔴 Out of range/);
+  assert.doesNotMatch(t, /TP|SL/);
+  const t2 = renderPositionCard({ ...base, pnl_usd: -7.21, pnl_pct: -0.8, in_range: false, strategy_text: "Mix 70/30", min_bin: 0, max_bin: 69 } as never);
+  assert.match(t2, /^\*\*BONK\/SOL\*\* Pos1…1111 \[Mix 70\/30 · 70 bins\]/);
+  assert.match(t2, /📉 −\$7\.21 \(−0\.80%\) · estimasi/);
+  assert.match(t2, /🔴 Out-of-range/);
 });
 
 test("age + keyboard", () => {

@@ -40,13 +40,13 @@ export function fmtTinyPrice(n: number | null | undefined): string {
 }
 
 /** Text bar of current price inside [min,max]: "−96% ━━━━━━━━━━●━ +4%". */
-export function rangeBar(min: number, max: number, now: number, width = 12): string {
+export function rangeBar(min: number, max: number, now: number, width = 16): string {
   if (!(min > 0 && max > min && now > 0)) return "";
   const lo = (min / now - 1) * 100;
   const hi = (max / now - 1) * 100;
   const t = Math.log(now / min) / Math.log(max / min); // bins are geometric
   const pos = Math.round(Math.min(1, Math.max(0, t)) * (width - 1));
-  const bar = Array.from({ length: width }, (_, i) => (i === pos ? "●" : "━")).join("");
+  const bar = Array.from({ length: width }, (_, i) => (i === pos ? "●" : "▬")).join("");
   const sgn = (x: number) => `${x >= 0 ? "+" : "−"}${Math.abs(x).toFixed(0)}%`;
   return `${sgn(lo)} ${t < 0 ? "◀" : ""}${bar}${t > 1 ? "▶" : ""} ${sgn(hi)}`;
 }
@@ -73,39 +73,35 @@ export function renderPositionCard(p: PositionCard, now = new Date()): string {
   const m = p.meteora && p.meteora.pnlUsd != null ? p.meteora : null;
   const pu = m ? m.pnlUsd : p.pnl_usd;
   const pp = m ? m.pnlPct : p.pnl_pct;
-  const status = p.in_range == null ? "⚪ Range ?" : p.in_range ? "🟢 In range" : "🔴 Out of range";
   const bins = p.min_bin != null && p.max_bin != null ? p.max_bin - p.min_bin + 1 : null;
-  const bar = p.min_price != null && p.max_price != null && p.active_price ? rangeBar(p.min_price, p.max_price, p.active_price) : "";
-  return screen(
-    `${pair} · DLMM`,
-    section(null, [status, p.strategy_text ? kv("Strategi", p.strategy_text) : null, p.partial ? "⚠️ Deploy sebagian" : null]),
-    section("💰 PnL", [
-      kv("PnL", pnlLine(pu, pp)),
-      kv("Sumber", m ? "Meteora" : "estimasi"),
-      kv("Value", usdOrNa(p.total_value_usd)),
-      kv("Deposit", usdOrNa(m?.depositUsd ?? p.cost_usd ?? null)),
-      kv("Fee unclaim", usdOrNa(m?.unclaimedFeesUsd ?? p.unclaimed_fees_usd)),
-      m?.feesUsd != null ? kv("Fee total", usdOrNa(m.feesUsd)) : null,
-    ]),
-    section("📐 Range", [
-      p.min_price != null ? kv("Min", fmtTinyPrice(p.min_price)) : null,
-      p.max_price != null ? kv("Max", fmtTinyPrice(p.max_price)) : null,
-      p.active_price != null ? kv("Now", fmtTinyPrice(p.active_price)) : null,
-      bar || null,
-      bins != null ? kv("Bins", String(bins)) : null,
-      p.mc_min != null || p.mc_max != null ? kv("MC", `${fmtCompactUsd(p.mc_min)}–${fmtCompactUsd(p.mc_max)}`) : null,
-      p.mc_now != null ? kv("MC now", fmtCompactUsd(p.mc_now)) : null,
-    ]),
-    section("ℹ️ Info", [
-      kv("Umur", fmtAge(p.opened_at, now.getTime()) ?? "n/a"),
-      kv("Update", `${kstTime(now)} KST`),
-      "📍 Posisi",
-      `\`${p.position}\``,
-      "🏊 Pool",
-      `\`${p.pool}\``,
-      `[Meteora](https://app.meteora.ag/dlmm/${p.pool}) · [Solscan](https://solscan.io/account/${p.position})`,
-    ]),
-  );
+  const tag = [p.strategy_text, bins != null ? `${bins} bins` : null].filter(Boolean).join(" · ");
+  const pnl =
+    pu == null
+      ? "📈 PnL n/a"
+      : `${pu >= 0 ? "📈 +" : "📉 −"}$${Math.abs(pu).toFixed(2)}${pp != null ? ` (${pp >= 0 ? "+" : "−"}${Math.abs(pp).toFixed(2)}%)` : ""}${m ? "" : " · estimasi"}`;
+  const out: (string | null)[] = [
+    `**${pair}** ${shortAddr(p.position)}${tag ? ` [${tag}]` : ""}`,
+    p.partial ? "⚠️ Deploy sebagian" : null,
+    "",
+    `📊 Value: ${usdOrNa(p.total_value_usd)}`,
+    pnl,
+    `💵 Fee berjalan: ${usdOrNa(m?.unclaimedFeesUsd ?? p.unclaimed_fees_usd)}`,
+    "",
+  ];
+  if (p.min_price != null && p.max_price != null) {
+    out.push(`📐 ${fmtTinyPrice(p.min_price)}–${fmtTinyPrice(p.max_price)} (now ${fmtTinyPrice(p.active_price)}) ${pair}`);
+    out.push(`🏷 MC ${fmtCompactUsd(p.mc_min)}–${fmtCompactUsd(p.mc_max)} (now ${fmtCompactUsd(p.mc_now)})`);
+    if (p.active_price) out.push(rangeBar(p.min_price, p.max_price, p.active_price));
+  } else {
+    out.push(`📐 bins ${p.min_bin ?? "?"}–${p.max_bin ?? "?"} (aktif ${p.active_id ?? "?"})`);
+  }
+  out.push("");
+  out.push(p.in_range == null ? "⚪ Range ?" : p.in_range ? "🟢 In-range" : "🔴 Out-of-range");
+  out.push("");
+  out.push(`🕐 ${fmtAge(p.opened_at, now.getTime()) ?? "n/a"} · updated ${kstTime(now)} KST`);
+  out.push(`[Meteora](https://app.meteora.ag/dlmm/${p.pool}) · [Solscan](https://solscan.io/account/${p.position})`);
+  out.push(`\`${p.position}\``);
+  return out.filter((x): x is string => x !== null).join("\n");
 }
 
 export function positionKeyboard(i: number): InlineKeyboard {
