@@ -141,6 +141,7 @@ export async function executeZapout(input: {
   positionAddress: string;
   poolName?: string;
   analysis?: ZapoutAnalysis;
+  onStage?: (stage: "close" | "swap") => void | Promise<void>;
 }): Promise<ZapoutExecResult> {
   const cfg = loadConfig({ requireTelegram: false });
   const steps: ZapoutExecResult["steps"] = [];
@@ -265,6 +266,11 @@ export async function executeZapout(input: {
   }
 
   // ── 2) Balance deltas (confirmed) → parallel quotes → swaps ──
+  try {
+    await input.onStage?.("swap");
+  } catch {
+    /* UI only */
+  }
   const tQuote = Date.now();
   const balAfter = await Promise.all(swapMints.map((m) => getTokenBalanceAtomic(m, user)));
   const deltas = swapMints.map((m, i) => ({ mint: m, delta: balAfter[i] - (balBefore[i] as bigint) }));

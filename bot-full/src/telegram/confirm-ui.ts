@@ -8,7 +8,7 @@ import { confirmKeyboard } from "./menus.js";
 import { loadSettings, saveSettings } from "../store/settings.js";
 import { takeAwaiting, type ConfirmRequest } from "../engine/confirm.js";
 
-type Runner = (ctx: Context, req: ConfirmRequest) => Promise<void>;
+type Runner = (ctx: Context, req: ConfirmRequest, statusMsgId?: number) => Promise<void>;
 let runner: Runner | null = null;
 
 export function setConfirmRunner(fn: Runner): void {
@@ -38,14 +38,32 @@ export async function presentConfirm(
   ctx: Context,
   text: string,
   confirmId: string,
-  opts: { edit?: boolean } = {},
+  opts: { edit?: boolean; msgId?: number } = {},
 ): Promise<"prompted" | "auto"> {
   if (isAutoConfirm() && runner) {
     const req = takeAwaiting(confirmId);
     if (req && req.status === "awaiting" && canAutoConfirm(req.purpose)) {
-      await ctx.reply(`${text}\n\n${AUTO_BADGE} — langsung dieksekusi.`, { link_preview_options: { is_disabled: true } });
-      await runner(ctx, req);
+      // compact: one status message (reuse msgId if given) — the runner edits it through stages
+      const status = `⏳ ${text.split("\n")[0]} · ⚡ auto`;
+      let id = opts.msgId;
+      if (id) {
+        try {
+          await ctx.api.editMessageText(ctx.chat!.id, id, status);
+        } catch {
+          id = undefined;
+        }
+      }
+      if (!id) id = (await ctx.reply(status)).message_id;
+      await runner(ctx, req, id);
       return "auto";
+    }
+  }
+  if (opts.msgId) {
+    try {
+      await ctx.api.editMessageText(ctx.chat!.id, opts.msgId, text, { reply_markup: confirmKeyboard(confirmId) });
+      return "prompted";
+    } catch {
+      /* fall through */
     }
   }
   if (opts.edit) await ctx.editMessageText(text, { reply_markup: confirmKeyboard(confirmId) });

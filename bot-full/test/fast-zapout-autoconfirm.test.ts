@@ -65,7 +65,7 @@ test("presentConfirm: OFF shows buttons; ON runs immediately once", async () => 
   const { createConfirm, getConfirm, markConfirm } = await import("../src/engine/confirm.js");
   const replies: Array<{ text: string; kb: boolean }> = [];
   const ctx = {
-    reply: async (text: string, o?: { reply_markup?: unknown }) => void replies.push({ text, kb: !!o?.reply_markup }),
+    reply: async (text: string, o?: { reply_markup?: unknown }) => (replies.push({ text, kb: !!o?.reply_markup }), { message_id: replies.length }),
   } as never;
   let runs = 0;
   setConfirmRunner(async (_c, req) => {
@@ -93,7 +93,7 @@ test("presentConfirm: OFF shows buttons; ON runs immediately once", async () => 
   const r2 = createConfirm({ purpose: "remove", summary: "x", payload: { reposition: { bins: 40 } } });
   assert.equal(await presentConfirm(ctx, "S2", r2.id), "auto");
   assert.equal(runs, 2);
-  assert.match(replies.at(-1)!.text, /Auto confirm close ON/);
+  assert.match(replies.at(-1)!.text, /⚡ auto/);
   assert.equal(getConfirm(r2.id)?.status, "executed");
   // already processed request is not re-run → falls back to prompt (stale button)
   await presentConfirm(ctx, "S2", r2.id);

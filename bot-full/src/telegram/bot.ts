@@ -4,7 +4,8 @@ import { Bot, InlineKeyboard, type Context } from "grammy";
 import { loadConfig, CONFIRM_TTL_MS } from "../config.js";
 import { fmtNum, fmtUsd, shortAddr, strategyLabel } from "../format.js";
 import { installHtml, sigLine } from "./html.js";
-import { sendPnlCard, type PositionSnapshot } from "./pnl-send.js";
+import { type PositionSnapshot } from "./pnl-send.js";
+import { setStatus, finishClose, closeTitle, registerCloseUi, type CloseOutcome } from "./close-ui.js";
 import { log, redactSecrets } from "../logger.js";
 import { isAuthorized } from "./auth.js";
 import { getSession, resetSession } from "./session.js";
@@ -160,6 +161,11 @@ export function createBot(): Bot {
       await replyMenu(ctx);
       return;
     }
+    if (req.purpose === "remove" || req.purpose === "zapout") {
+      // compact close: the confirm message itself becomes the status message
+      await executeConfirmed(ctx, req, ctx.callbackQuery.message?.message_id);
+      return;
+    }
     await ctx.editMessageText(`⏳ Menjalankan ${req.purpose}${cfg.dryRun ? " (DRY_RUN)" : ""}…`);
     await executeConfirmed(ctx, req);
   });
@@ -168,6 +174,7 @@ export function createBot(): Bot {
 
   registerAddPanel(bot);
   registerPositionsView(bot);
+  registerCloseUi(bot);
   registerSettingsPanel(bot);
 
   // claim / remove index callbacks
@@ -298,9 +305,56 @@ const PURPOSE_LABEL: Record<string, string> = {
   zapout: "⚡ Zapout",
 };
 
-async function executeConfirmed(ctx: Context, req: ConfirmRequest): Promise<void> {
+async function runClose(ctx: Context, req: ConfirmRequest, statusMsgId?: number): Promise<void> {
+  const id = req.id;
+  const kind = req.purpose as "remove" | "zapout";
+  const snap = (req.payload as Record<string, unknown>).snapshot as PositionSnapshot | undefined;
+  const pair = snap?.pair || String(req.payload.pool_name || "").replace(/-/g, "/") || "posisi";
+  const t0 = Date.now();
+  let msgId = await setStatus(ctx, statusMsgId, `⏳ ${closeTitle(kind, pair)}…`);
+  let solBefore: number | null = null;
+  const cfgNow = loadConfig({ requireTelegram: false, skipWallet: true });
+  if (!cfgNow.dryRun) {
+    try {
+      solBefore = (await getBalances(0)).sol;
+    } catch {
+      /* optional */
+    }
+  }
+  let outcome: CloseOutcome;
+  try {
+    const result = await runConfirmedAction(req.purpose, req.payload, {
+      onStage: async (st) => {
+        if (st === "swap") msgId = await setStatus(ctx, msgId, `⏳ Swap ${pair} ke SOL…`);
+      },
+    });
+    markConfirm(id, result.success ? "executed" : "failed", result.message);
+    let solReceived: number | null = null;
+    if (result.success && solBefore != null) {
+      try {
+        solReceived = (await getBalances(0)).sol - solBefore;
+      } catch {
+        /* optional */
+      }
+    }
+    outcome = { kind, pair, success: result.success, signatures: result.signatures || [], message: result.message, error: result.error, ms: Date.now() - t0, solReceived, snapshot: snap };
+    if (result.success && kind === "remove") removeTrackedPosition(String(req.payload.position));
+  } catch (e) {
+    markConfirm(id, "failed", (e as Error).message);
+    outcome = { kind, pair, success: false, signatures: [], error: (e as Error).message, ms: Date.now() - t0, snapshot: snap };
+  }
+  await finishClose(ctx, msgId, outcome);
+  const repo = (req.payload as Record<string, unknown>).reposition as { bins?: number } | undefined;
+  resetSession(chatKey(ctx));
+  if (outcome.success && kind === "remove" && repo) {
+    await openRepositionPanel(ctx, String(req.payload.pool), Number(repo.bins || 40));
+  }
+}
+
+async function executeConfirmed(ctx: Context, req: ConfirmRequest, statusMsgId?: number): Promise<void> {
   const id = req.id;
   markConfirm(id, "confirmed"); // prevents double execution (double tap / auto + tap)
+  if (req.purpose === "remove" || req.purpose === "zapout") return runClose(ctx, req, statusMsgId);
     try {
       const result = await runConfirmedAction(req.purpose, req.payload);
       markConfirm(id, result.success ? "executed" : "failed", result.message);
@@ -318,16 +372,6 @@ async function executeConfirmed(ctx: Context, req: ConfirmRequest): Promise<void
           .join("\n"),
         { reply_markup: mainMenuKeyboard() },
       );
-      const snap = (req.payload as Record<string, unknown>).snapshot as PositionSnapshot | undefined;
-      if (result.success && (req.purpose === "remove" || req.purpose === "zapout") && snap && !String(result.signatures?.[0] ?? "").startsWith("DRY_RUN")) {
-        void sendPnlCard(ctx, snap, true); // best-effort, never blocks close
-      }
-      const repo = (req.payload as Record<string, unknown>).reposition as { bins?: number } | undefined;
-      if (result.success && req.purpose === "remove" && repo) {
-        resetSession(chatKey(ctx));
-        await openRepositionPanel(ctx, String(req.payload.pool), Number(repo.bins || 40));
-        return;
-      }
     } catch (e) {
       markConfirm(id, "failed", (e as Error).message);
       await ctx.reply(`❌ ${redactSecrets((e as Error).message)}`, { reply_markup: mainMenuKeyboard() });
@@ -338,6 +382,7 @@ async function executeConfirmed(ctx: Context, req: ConfirmRequest): Promise<void
 async function runConfirmedAction(
   purpose: string,
   payload: Record<string, unknown>,
+  hooks: { onStage?: (stage: "close" | "swap") => void | Promise<void> } = {},
 ): Promise<{ success: boolean; signatures?: string[]; message?: string; error?: string }> {
   if (purpose === "add") {
     const txs = payload.txs as PendingTxItem[];
@@ -441,6 +486,7 @@ async function runConfirmedAction(
       positionAddress: String(payload.position),
       poolName: String(payload.pool_name || ""),
       analysis: payload.analysis as never,
+      onStage: hooks.onStage,
     });
     return {
       success: result.success,

@@ -68,21 +68,27 @@ export function cardDataFromSnapshot(s: PositionSnapshot, closed: boolean, now =
   };
 }
 
+/** Render PNG (with candles if available). Throws on render failure. */
+export async function buildPnlCardPng(s: PositionSnapshot, closed: boolean): Promise<Buffer> {
+  const d = cardDataFromSnapshot(s, closed);
+  const toSec = Math.floor(Date.now() / 1000);
+  const opened = s.opened_at ? Math.floor(Date.parse(s.opened_at) / 1000) : NaN;
+  const fromSec = Number.isFinite(opened) ? opened : toSec - 24 * 3600;
+  try {
+    d.candles = await fetchOhlcv({ pool: s.pool, tokenMint: s.mint_x, fromSec, toSec });
+  } catch (e) {
+    log("pnl_card", `ohlcv failed: ${(e as Error).message}`, "warn");
+  }
+  return renderPnlCard(d);
+}
+
 export async function sendPnlCard(ctx: Context, s: PositionSnapshot, closed: boolean): Promise<void> {
   try {
     const d = cardDataFromSnapshot(s, closed);
-    const toSec = Math.floor(Date.now() / 1000);
-    const opened = s.opened_at ? Math.floor(Date.parse(s.opened_at) / 1000) : NaN;
-    const fromSec = Number.isFinite(opened) ? opened : toSec - 24 * 3600;
-    try {
-      d.candles = await fetchOhlcv({ pool: s.pool, tokenMint: s.mint_x, fromSec, toSec });
-    } catch (e) {
-      log("pnl_card", `ohlcv failed: ${(e as Error).message}`, "warn");
-    }
-    const png = renderPnlCard(d);
+    const png = await buildPnlCardPng(s, closed);
     const pnl = d.pnlUsd == null ? "PnL n/a" : `PnL ${d.pnlUsd >= 0 ? "+" : "-"}$${Math.abs(d.pnlUsd).toFixed(2)} (${d.pnlPct!.toFixed(2)}%)`;
     await ctx.replyWithPhoto(new InputFile(png, "pnl.png"), {
-      caption: `📈 **${d.pair}** · ${closed ? "closed" : "open"}\n${pnl}\nPos \`${s.position}\``,
+      caption: `📈 **${d.pair}** · ${closed ? "closed" : "open"} · ${pnl}`,
     });
   } catch (e) {
     log("pnl_card", redactSecrets((e as Error).message), "warn");

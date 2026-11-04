@@ -223,17 +223,19 @@ export async function showPositionCards(ctx: Context, opts: { refetch?: boolean;
 function confirmFor(kind: "claim" | "remove", p: PositionCard, reposition: boolean): { text: string; id: string } {
   const cfg = loadConfig({ requireTelegram: false, skipWallet: true });
   const width = (p.max_bin ?? 0) - (p.min_bin ?? 0) + 1;
-  const summary = [
-    kind === "claim" ? "💰 Claim fees" : reposition ? "♻️ Reposition — langkah 1: Exit (remove 100% + close)" : "🚪 Exit (remove 100% + close)",
-    `Pool: **${p.pair}**`,
-    `Pos: \`${p.position}\``,
-    `Value ${usdOrNa(p.total_value_usd)} | fees ${usdOrNa(p.unclaimed_fees_usd)}`,
-    reposition ? `Langkah 2: panel Add terbuka dengan ${Math.min(width, 69)} bins di sekitar harga sekarang (perlu Preview + Confirm lagi).` : "",
-    cfg.dryRun ? "Mode: DRY_RUN" : "Mode: LIVE",
-    `Konfirmasi dalam ${CONFIRM_TTL_MS / 1000}s.`,
-  ]
-    .filter(Boolean)
-    .join("\n");
+  const mode = cfg.dryRun ? "🧪 DRY_RUN" : "⚠️ LIVE";
+  const val = p.total_value_usd == null ? "n/a" : fmtUsd(p.total_value_usd + (p.unclaimed_fees_usd ?? 0));
+  const summary =
+    kind === "remove"
+      ? [
+          `${reposition ? "♻️ Reposition (1/2) · Exit" : "🚪 Exit"} **${p.pair}** · ≈${val}`,
+          reposition ? `Lalu panel Add ${Math.min(width, 69)} bins (perlu Confirm lagi) · ${mode} · ${CONFIRM_TTL_MS / 1000}s` : `${mode} · konfirmasi ${CONFIRM_TTL_MS / 1000}s`,
+        ].join("\n")
+      : [
+          `💰 Claim fees **${p.pair}** · ${usdOrNa(p.unclaimed_fees_usd)}`,
+          `Pos \`${p.position}\``,
+          `${mode} · konfirmasi ${CONFIRM_TTL_MS / 1000}s`,
+        ].join("\n");
   const req = createConfirm({
     purpose: kind,
     summary,

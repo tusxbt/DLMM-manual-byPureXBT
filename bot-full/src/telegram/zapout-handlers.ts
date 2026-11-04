@@ -62,7 +62,8 @@ export async function onZapoutPos(ctx: Context, index: number): Promise<void> {
   }
   const cfg = loadConfig({ requireTelegram: false, skipWallet: true });
   try {
-    await ctx.reply("⏳ Analisis zapout…");
+    const pair = String((p as Record<string, unknown>).pair || p.pool_name || "posisi").replace(/-/g, "/");
+    const statusId = (await ctx.reply(`⏳ Cek ${pair}…`)).message_id;
     const analysis = await analyzeZapout({
       poolAddress: String(p.pool),
       positionAddress: String(p.position),
@@ -70,13 +71,14 @@ export async function onZapoutPos(ctx: Context, index: number): Promise<void> {
       totalValueUsd: p.total_value_usd == null ? NaN : Number(p.total_value_usd),
       unclaimedFeesUsd: p.unclaimed_fees_usd == null ? NaN : Number(p.unclaimed_fees_usd),
     });
+    const val = Number.isFinite(analysis.totalValueUsd) ? `$${(analysis.totalValueUsd + (Number.isFinite(analysis.unclaimedFeesUsd) ? analysis.unclaimedFeesUsd : 0)).toFixed(2)}` : "n/a";
     const summary = [
-      formatZapoutPreview(analysis),
-      "",
-      cfg.dryRun ? "Mode: DRY_RUN" : "Mode: LIVE",
-      `Konfirmasi dalam ${CONFIRM_TTL_MS / 1000}s.`,
-      "Catatan: zapout dikecualikan dari penolakan keras MAX_SWAP_USD (exit), tapi ada peringatan jika di atas cap.",
-    ].join("\n");
+      `⚡ Zapout **${pair}** → SOL · ≈${val}`,
+      `slip ${analysis.swapSlippagePct}% · ${cfg.dryRun ? "🧪 DRY_RUN" : "⚠️ LIVE"} · konfirmasi ${CONFIRM_TTL_MS / 1000}s`,
+      analysis.overSwapCap ? `⚠️ swap ≈$${analysis.estTokenOutUsd.toFixed(2)} > cap $${analysis.maxSwapUsd} (exit tetap diizinkan)` : null,
+    ]
+      .filter(Boolean)
+      .join("\n");
     const req = createConfirm({
       purpose: "zapout",
       summary,
@@ -89,8 +91,7 @@ export async function onZapoutPos(ctx: Context, index: number): Promise<void> {
       },
     });
     resetSession(chatKey(ctx));
-    const text = summary.length > 3500 ? summary.slice(0, 3490) + "\n…" : summary;
-    await presentConfirm(ctx, text, req.id);
+    await presentConfirm(ctx, summary, req.id, { msgId: statusId });
   } catch (e) {
     await ctx.reply(`❌ ${(e as Error).message}`, { reply_markup: mainMenuKeyboard() });
   }
