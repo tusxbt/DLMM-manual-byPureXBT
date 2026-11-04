@@ -131,13 +131,17 @@ let thinReady = false;
 function ensureThin(): void {
   if (thinReady) return;
   try {
-    GlobalFonts.registerFromPath(path.join(ASSETS, "fonts", "Oxanium.ttf"), "CardThin");
+    GlobalFonts.registerFromPath(path.join(ASSETS, "fonts", "Manrope-Regular.ttf"), "CardText");
+    GlobalFonts.registerFromPath(path.join(ASSETS, "fonts", "Manrope-SemiBold.ttf"), "CardSemi");
+    GlobalFonts.registerFromPath(path.join(ASSETS, "fonts", "SpaceGrotesk-Bold.ttf"), "CardNum");
   } catch {
     /* DejaVu fallback */
   }
   thinReady = true;
 }
-const thin = (ctx: SKRSContext2D, px: number) => (ctx.font = `${px}px CardThin, CardSans, sans-serif`);
+const thin = (ctx: SKRSContext2D, px: number) => (ctx.font = `${px}px CardText, CardSans, sans-serif`);
+const semi = (ctx: SKRSContext2D, px: number) => (ctx.font = `${px}px CardSemi, CardSansBold, sans-serif`);
+const numf = (ctx: SKRSContext2D, px: number) => (ctx.font = `${px}px CardNum, CardSansBold, sans-serif`);
 
 const money = (n: number | null | undefined, sign = false) =>
   n == null || !Number.isFinite(n)
@@ -175,22 +179,22 @@ export function renderPnlCard(d: PnlCardData): Buffer {
   ctx.fillStyle = g;
   ctx.fillRect(0, 0, W, H);
 
-  const center = (t: string, y: number, px: number, color: string) => {
-    thin(ctx, px);
+  const center = (t: string, y: number, px: number, color: string, f: (c: SKRSContext2D, px: number) => unknown = thin) => {
+    f(ctx, px);
     ctx.fillStyle = color;
     ctx.textAlign = "center";
     ctx.fillText(t, W / 2, y);
     ctx.textAlign = "left";
   };
   // brand + pair line
-  center("D L M M   B O S K U", 78, 18, MUTED);
+  center("DLMM BOSKU", 78, 16, MUTED, semi);
   const pairLine = [d.pair.replace("-", "/"), d.strategy].filter(Boolean).join("  ·  ");
-  center(pairLine, 128, 30, TEXT);
+  center(pairLine, 128, 28, TEXT, semi);
 
   // big PnL %
   const pct = d.pnlPct == null ? "n/a" : `${d.pnlPct >= 0 ? "+" : "−"}${Math.abs(d.pnlPct).toFixed(2)}%`;
-  center(pct, 270, 120, col);
-  center(money(d.pnlUsd, true), 330, 40, col);
+  center(pct, 270, 112, col, numf);
+  center(money(d.pnlUsd, true), 330, 36, col, numf);
   center(d.source === "Meteora" ? "PnL · Meteora" : d.source === "realized" ? "PnL realized · tanpa rent & fee tx" : "PnL estimasi", 368, 16, MUTED);
 
   // full-width minimal area chart
@@ -262,9 +266,9 @@ export function renderPnlCard(d: PnlCardData): Buffer {
   stats.forEach(([k, v, cl], i) => {
     const x = 70 + sw * i + sw / 2;
     ctx.textAlign = "center";
-    thin(ctx, 14); ctx.fillStyle = MUTED; ctx.fillText(k.toUpperCase(), x, 652);
-    let fpx = 26; thin(ctx, fpx);
-    while (ctx.measureText(v).width > sw - 12 && fpx > 14) thin(ctx, --fpx);
+    semi(ctx, 12); ctx.fillStyle = MUTED; ctx.fillText(k.toUpperCase(), x, 652);
+    let fpx = 24; semi(ctx, fpx);
+    while (ctx.measureText(v).width > sw - 12 && fpx > 14) semi(ctx, --fpx);
     ctx.fillStyle = cl; ctx.fillText(v, x, 688);
   });
   ctx.textAlign = "left";

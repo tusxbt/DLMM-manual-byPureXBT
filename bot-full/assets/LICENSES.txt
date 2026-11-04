@@ -1,1 +1,1 @@
-Oxanium font (c) The Oxanium Project Authors — SIL Open Font License 1.1 (https://openfontlicense.org).
+Fonts: Manrope (Regular/SemiBold, static instances) (c) The Manrope Project Authors; Space Grotesk (Bold, static instance) (c) The Space Grotesk Project Authors. Both under SIL Open Font License 1.1 — https://openfontlicense.org
