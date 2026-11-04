@@ -33,10 +33,11 @@ test("Meteora PnL parse — Donkey case +$0.91 / +1.88%", () => {
   assert.equal(card.pnlPct, 1.88);
   assert.equal(card.source, "Meteora");
   assert.ok(Math.abs((card.exitUsd ?? 0) - 49.47) < 1e-9);
-  const t = compactResult({ kind: "zapout", pair: "Donkey/SOL", success: true, signatures: ["s1"], ms: 2000, solReceived: 0.5509, snapshot: { pool: "P", position: "DonkeyPos111", total_value_usd: null, unclaimed_fees_usd: null, meteora: m } });
+  const t = compactResult({ kind: "zapout", pair: "Donkey/SOL", success: true, signatures: ["s1"], ms: 2000, realized: { solNet: 0.5509, tokenNet: {}, rentSol: 0.0574, feeSol: 0.0001, exitUsd: 49.97, pnlUsd: 0.91, pnlPct: 1.86 }, snapshot: { pool: "P", position: "DonkeyPos111", total_value_usd: null, unclaimed_fees_usd: null, meteora: m } });
   assert.match(t, /\+\$0\.91 \(\+1\.88%\)/);
-  assert.match(t, /Realized: \+0\.5509 SOL/);
-  assert.match(t, /\+rent, −fee tx & slippage/);
+  assert.match(t, /Realized: 🟢 \+\$0\.91 \(\+1\.86%\)/);
+  assert.match(t, /Diterima: 0\.5509 SOL/);
+  assert.doesNotMatch(t, /\+rent/);
 });
 
 test("fallback is labelled estimasi; unknown price → n/a", () => {

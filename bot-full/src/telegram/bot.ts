@@ -1,3 +1,5 @@
+import { realizedFromFlows, realizedUsd, fetchFlows } from "../engine/realized.js";
+import type { RealizedOut } from "./pnl-send.js";
 import { registerPnlBgUi } from "./pnl-bg.js";
 import { poolBlock } from "./pool-format.js";
 import { presentConfirm, setConfirmRunner } from "./confirm-ui.js";
@@ -22,7 +24,7 @@ import { partialKb, registerWideUi } from "./wide-ui.js";
 import { searchPools, listLivePositions, getActiveBin } from "../engine/dlmm-read.js";
 import { buildAddLiquidityTxs, buildClaimFeeTxs, buildRemoveAndCloseTxs, binsFromPct } from "../engine/dlmm-build.js";
 import { getBalances } from "../engine/connection.js";
-import { getSolUsd } from "../engine/prices.js";
+import { getSolUsd, getUsdPrices } from "../engine/prices.js";
 import { createConfirm, takeAwaiting, markConfirm, cancelConfirm, renewConfirm, expiredAction } from "../engine/confirm.js";
 import { resolvePosition, clearCardsCache } from "./positions-view.js";
 import { assertUsdCap, executePendingTxs } from "../engine/executor.js";
@@ -357,6 +359,24 @@ const PURPOSE_LABEL: Record<string, string> = {
   zapout: "⚡ Zapout",
 };
 
+/** Realized from the close txs (withdrawn + fees + swap output), excluding rent refunds & tx fees. */
+async function computeRealized(sigs: string[], snap?: PositionSnapshot): Promise<RealizedOut | null> {
+  const real = sigs.filter((x) => !x.startsWith("DRY_RUN"));
+  if (!real.length) return null;
+  const wallet = loadConfig({ requireTelegram: false, skipWallet: true }).walletPublicKey.toBase58();
+  const r = realizedFromFlows(await fetchFlows(real), wallet);
+  let solUsd: number | null = null;
+  try {
+    solUsd = await getSolUsd();
+  } catch {
+    solUsd = null;
+  }
+  const mints = Object.keys(r.tokenNet);
+  const prices = mints.length ? await getUsdPrices(mints).catch(() => ({}) as Record<string, number>) : {};
+  const deposit = snap?.meteora?.depositUsd ?? (snap?.cost_usd && snap.cost_usd > 0 ? snap.cost_usd : null);
+  return { ...r, ...realizedUsd(r, solUsd, prices, deposit) };
+}
+
 async function runClose(ctx: Context, req: ConfirmRequest, statusMsgId?: number): Promise<void> {
   const id = req.id;
   const kind = req.purpose as "remove" | "zapout";
@@ -364,15 +384,6 @@ async function runClose(ctx: Context, req: ConfirmRequest, statusMsgId?: number)
   const pair = snap?.pair || String(req.payload.pool_name || "").replace(/-/g, "/") || "posisi";
   const t0 = Date.now();
   let msgId = await setStatus(ctx, statusMsgId, `⏳ ${closeTitle(kind, pair)}…`);
-  let solBefore: number | null = null;
-  const cfgNow = loadConfig({ requireTelegram: false, skipWallet: true });
-  if (!cfgNow.dryRun) {
-    try {
-      solBefore = (await getBalances(0)).sol;
-    } catch {
-      /* optional */
-    }
-  }
   let outcome: CloseOutcome;
   try {
     const result = await runConfirmedAction(req.purpose, req.payload, {
@@ -384,15 +395,9 @@ async function runClose(ctx: Context, req: ConfirmRequest, statusMsgId?: number)
       },
     });
     markConfirm(id, result.success ? "executed" : "failed", result.message);
-    let solReceived: number | null = null;
-    if (result.success && solBefore != null) {
-      try {
-        solReceived = (await getBalances(0)).sol - solBefore;
-      } catch {
-        /* optional */
-      }
-    }
-    outcome = { kind, pair, success: result.success, signatures: result.signatures || [], message: result.message, error: result.error, ms: Date.now() - t0, solReceived, snapshot: snap };
+    const ms = Date.now() - t0;
+    const realized = result.success ? await computeRealized(result.signatures || [], snap).catch(() => null) : null;
+    outcome = { kind, pair, success: result.success, signatures: result.signatures || [], message: result.message, error: result.error, ms, realized, snapshot: snap ? { ...snap, realized } : snap };
     if (result.success && kind === "remove") removeTrackedPosition(String(req.payload.position));
   } catch (e) {
     markConfirm(id, "failed", (e as Error).message);

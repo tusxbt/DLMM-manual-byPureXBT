@@ -191,7 +191,7 @@ export function renderPnlCard(d: PnlCardData): Buffer {
   const pct = d.pnlPct == null ? "n/a" : `${d.pnlPct >= 0 ? "+" : "−"}${Math.abs(d.pnlPct).toFixed(2)}%`;
   center(pct, 270, 120, col);
   center(money(d.pnlUsd, true), 330, 40, col);
-  center(d.source && d.source !== "Meteora" ? "PnL estimasi" : "PnL · Meteora", 368, 16, MUTED);
+  center(d.source === "Meteora" ? "PnL · Meteora" : d.source === "realized" ? "PnL realized · tanpa rent & fee tx" : "PnL estimasi", 368, 16, MUTED);
 
   // full-width minimal area chart
   const cx = 70, cw = W - 140, cy = 410, ch = 170;

@@ -84,18 +84,18 @@ Fee: $1.24
 In range: 1/2
 
 Pilih posisi ⬇️
-🕐 01:28:41 KST
+🕐 01:38:41 KST
 ```
 
 ## Close / Zapout result (+ ℹ️ Detail button)
 
-_max line: 27 chars_
+_max line: 28 chars_
 
 ```
 ✅ **Zapout Donkey/SOL**
 PnL: 🟢 +$0.91 (+1.88%)
-Realized: +0.5509 SOL
-(+rent, −fee tx & slippage)
+Realized: 🟢 +$0.91 (+1.86%)
+Diterima: 0.5509 SOL
 Waktu: 3.0s
 [🧾 Tx Solscan](https://solscan.io/tx/5xTxSig) +1
 ```

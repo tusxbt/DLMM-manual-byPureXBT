@@ -31,7 +31,7 @@ async function main() {
     wide: { txCount: 3, positionRentSol: 0.0582, binArrayRentSol: 0.1424, binArraysCount: 2 }, position: card.position, dryRun: false, ttlSec: 60,
   });
   const list = renderPositionList([card as never, { ...card, pair: "BONK/SOL", in_range: false, meteora: null } as never], 0).text;
-  const close = compactResult({ kind: "zapout", pair: "Donkey/SOL", success: true, signatures: ["a", "5xTxSig"], ms: 3012, solReceived: 0.5509, snapshot: { pool: "p", position: "q", total_value_usd: null, unclaimed_fees_usd: null, meteora: { ...met, closed: true } } });
+  const close = compactResult({ kind: "zapout", pair: "Donkey/SOL", success: true, signatures: ["a", "5xTxSig"], ms: 3012, realized: { solNet: 0.5509, tokenNet: {}, rentSol: 0.0574, feeSol: 0.0001, exitUsd: 49.97, pnlUsd: 0.91, pnlPct: 1.86 }, snapshot: { pool: "p", position: "q", total_value_usd: null, unclaimed_fees_usd: null, meteora: { ...met, closed: true } } });
   const closeErr = compactResult({ kind: "remove", pair: "AMD/SOL", success: false, signatures: [], ms: 1, error: "block height exceeded" });
   const wallet = walletText({ wallet: "9xQeWvG816bUx9EPjHmaT23yvVM2ZWbrrpZb9PusVFin", sol: 1.2345, solUsd: 119.75, usdc: 12.5, totalUsd: 132.25, owner: true, dryRun: false, capSwap: 100 });
   const { poolBlock } = await import("../src/telegram/pool-format.js");

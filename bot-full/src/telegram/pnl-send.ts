@@ -27,6 +27,18 @@ export type PositionSnapshot = {
   bins?: number | null;
   amount_sol?: number | null;
   exit_label?: string | null;
+  /** realized from close txs (no rent, no tx fee) */
+  realized?: RealizedOut | null;
+};
+
+export type RealizedOut = {
+  solNet: number;
+  tokenNet: Record<string, number>;
+  rentSol: number;
+  feeSol: number;
+  exitUsd: number | null;
+  pnlUsd: number | null;
+  pnlPct: number | null;
 };
 
 export function snapshotOf(p: Record<string, unknown>): PositionSnapshot {
@@ -87,6 +99,10 @@ export function cardDataFromSnapshot(s: PositionSnapshot, closed: boolean, now =
       modal: m.depositUsd == null && s.amount_sol ? `${s.amount_sol} SOL` : null,
       source: "Meteora",
     };
+  }
+  const r = closed ? s.realized : null;
+  if (r && r.pnlUsd != null) {
+    return { ...ownCard(s, closed, now), exitUsd: r.exitUsd, pnlUsd: r.pnlUsd, pnlPct: r.pnlPct, source: "realized" };
   }
   return { ...ownCard(s, closed, now), source: "estimasi" };
 }

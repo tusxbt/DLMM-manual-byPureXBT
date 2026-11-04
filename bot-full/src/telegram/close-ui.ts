@@ -9,7 +9,7 @@ import { mainMenuKeyboard } from "./menus.js";
 import { redactSecrets, log } from "../logger.js";
 import { code } from "./html.js";
 import { showPositionCards } from "./positions-view.js";
-import { buildPnlCardPng, type PositionSnapshot } from "./pnl-send.js";
+import { buildPnlCardPng, type PositionSnapshot, type RealizedOut } from "./pnl-send.js";
 
 import { currentUser } from "../users/context.js";
 import { kv, pnlLine } from "./layout.js";
@@ -40,12 +40,19 @@ export type CloseOutcome = {
   message?: string;
   error?: string;
   ms: number;
-  solReceived?: number | null;
+  /** realized from close txs (withdrawn + fees + swap), rent refunds & tx fees excluded */
+  realized?: RealizedOut | null;
   snapshot?: PositionSnapshot;
 };
 
 export function closeTitle(kind: "remove" | "zapout", pair: string): string {
   return kind === "zapout" ? `⚡ Zapout ${pair} → SOL` : `🚪 Exit ${pair}`;
+}
+
+/** "+$1.20 (+2.40%) · 0.5509 SOL (tanpa rent)" — rent refunds & tx fees excluded. */
+export function realizedText(r: RealizedOut): string {
+  const sol = `${r.solNet.toFixed(4)} SOL${Object.keys(r.tokenNet).length ? " + token" : ""}`;
+  return `${r.pnlUsd != null ? `${pnlLine(r.pnlUsd, r.pnlPct)} · ` : ""}${sol} (tanpa rent)`;
 }
 
 /** 2–3 short lines. Pure for tests. */
@@ -61,6 +68,9 @@ export function compactResult(o: CloseOutcome): string {
   let src = "";
   if (m) {
     pnl = pnlLine(m.pnlUsd, m.pnlPct);
+  } else if (o.realized?.pnlUsd != null) {
+    pnl = pnlLine(o.realized.pnlUsd, o.realized.pnlPct);
+    src = "realized, tanpa rent";
   } else {
     const exitUsd = s?.total_value_usd == null ? null : s.total_value_usd + (s.unclaimed_fees_usd ?? 0);
     if (s?.cost_usd && s.cost_usd > 0 && exitUsd != null) {
@@ -76,8 +86,8 @@ export function compactResult(o: CloseOutcome): string {
     `✅ **${name}**${dry ? " 🧪" : ""}`,
     kv("PnL", pnl),
     src ? kv("Sumber", src) : null,
-    o.solReceived != null ? kv("Realized", `${o.solReceived >= 0 ? "+" : "−"}${Math.abs(o.solReceived).toFixed(4)} SOL`) : null,
-    o.solReceived != null ? "(+rent, −fee tx & slippage)" : null,
+    o.realized && !src.startsWith("realized") && o.realized.pnlUsd != null ? kv("Realized", pnlLine(o.realized.pnlUsd, o.realized.pnlPct)) : null,
+    o.realized ? kv("Diterima", `${o.realized.solNet.toFixed(4)} SOL${Object.keys(o.realized.tokenNet).length ? " +tkn" : ""}`) : null,
     kv("Waktu", `${(o.ms / 1000).toFixed(1)}s`),
     last ? `[🧾 Tx Solscan](https://solscan.io/tx/${last})${real.length > 1 ? ` +${real.length - 1}` : ""}` : null,
   ]
