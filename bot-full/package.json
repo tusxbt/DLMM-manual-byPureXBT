@@ -1,0 +1,33 @@
+{
+  "name": "dlmm-bot-full",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Manual Meteora DLMM Telegram bot — self-signs with WALLET_PRIVATE_KEY from .env (separate small wallet only)",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "postinstall": "node scripts/patch-anchor.js || true",
+    "dev": "tsx src/index.ts",
+    "build": "tsc -p tsconfig.json",
+    "start": "node dist/index.js",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "tsx --test test/*.test.ts",
+    "smoke": "tsx scripts/smoke-read.ts"
+  },
+  "dependencies": {
+    "@meteora-ag/dlmm": "1.9.4",
+    "@solana/web3.js": "^1.98.0",
+    "bn.js": "^5.2.1",
+    "bs58": "^6.0.0",
+    "dotenv": "^16.4.7",
+    "grammy": "^1.35.0"
+  },
+  "devDependencies": {
+    "@types/bn.js": "^5.1.6",
+    "@types/node": "^22.13.10",
+    "tsx": "^4.19.3",
+    "typescript": "^5.8.2"
+  }
+}

@@ -1,0 +1,15 @@
+[Unit]
+Description=DLMM Bot Full (Telegram self-signing — wallet dana kecil)
+After=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h/crypto-desk/dlmm/bot-full
+EnvironmentFile=%h/crypto-desk/dlmm/bot-full/.env
+ExecStart=/usr/bin/npm start
+Restart=on-failure
+RestartSec=5
+# Pastikan .env chmod 600. Jangan taruh private key di unit file.
+
+[Install]
+WantedBy=default.target
