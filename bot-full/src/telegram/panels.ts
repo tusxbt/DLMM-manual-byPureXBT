@@ -26,6 +26,8 @@ import {
   parsePositiveNumber,
   parseBins,
   parsePriceRange,
+  sidePct,
+  parsePctRange,
   renderPanelText,
   panelKeyboard,
   panelMissing,
@@ -40,6 +42,7 @@ import {
   tokenSymbol,
   tokenMint,
   MAX_BINS_PER_POSITION,
+  pctLabel,
 } from "./add-panel.js";
 import { PublicKey } from "@solana/web3.js";
 import { isAutoConfirm, setAutoConfirm, AUTO_BADGE } from "./confirm-ui.js";
@@ -213,6 +216,7 @@ async function deployPanel(ctx: Context): Promise<void> {
         mode: p.range.kind === "preset" ? "preset_pct" : p.range.kind === "bins" ? "custom_bins" : "custom_price",
       },
       poolName: String(p.pool?.name || ""),
+      mixPct: loadSettings().mixBidAskPct,
     });
     const summary = [
       "👀 Preview Add LP",
@@ -227,6 +231,10 @@ async function deployPanel(ctx: Context): Promise<void> {
           (p.solUsd ? ` (${fmtUsd(c.minPrice * p.solUsd)} → ${fmtUsd(c.maxPrice * p.solUsd)})` : "")
         : "",
       c.clamped ? `⚠️ Custom harga dipotong ke ${MAX_BINS_PER_POSITION} bins.` : "",
+      built.quote
+        ? `🧱 Posisi lebar ${c.total + 1} bins · ${built.quote.txCount} tx\n      rent posisi ≈${fmtNum(built.quote.positionRentSol, 4)} SOL (kembali saat close)\n      bin array baru ${Number.isFinite(built.quote.binArraysCount) ? built.quote.binArraysCount : "?"} ≈${fmtNum(built.quote.binArrayRentSol, 4)} SOL (tidak kembali)`
+        : "",
+      built.mix ? `🧪 Mix: BidAsk ${built.mix.pct}% (${built.mix.primaryText}) + Spot ${100 - built.mix.pct}% (${built.mix.spotText})` : "",
       `Slippage: ${getLiqSlippagePct()}%`,
       `Perkiraan cost: ${fmtUsd(costUsd)} (cap ${fmtUsd(cfg.maxPositionUsd)})`,
       `📍 Posisi baru \`${built.position}\``,
@@ -317,7 +325,7 @@ export function registerAddPanel(bot: Bot): void {
             : `💵 Ketik: <sol> <${sym}> (contoh 0.5 1000)`;
       return showSub(ctx, prompt, BACK_KB());
     }
-    if (field === "range") return showSub(ctx, "📏 Range — preset bins, custom bins, atau custom harga:", rangePickerKeyboard(p, loadSettings().binPresets));
+    if (field === "range") return showSub(ctx, "📏 Range — preset bins, preset %, atau custom (bins / % / harga). Maks 1400 bins; >69 bins = posisi lebar multi-tx.", rangePickerKeyboard(p, loadSettings().binPresets, loadSettings().rangePresets));
     if (field === "slip") {
       s.awaitingText = async (text) => {
         await deleteUserMsg(ctx);
@@ -388,6 +396,29 @@ export function registerAddPanel(bot: Bot): void {
             await renderAddPanel(ctx);
           };
           return showSub(ctx, `📏 Ketik: <bins_bawah> <bins_atas>  (contoh: 40 2, total maks ${MAX_BINS_PER_POSITION})`, BACK_KB());
+        }
+        if (v.startsWith("_pp")) {
+          const pp = loadSettings().rangePresets[Number(v.slice(3))];
+          if (!pp) return renderAddPanel(ctx, "Preset % tidak ada.");
+          p.range = { kind: "pct", ...sidePct(p.side, pp) };
+          return renderAddPanel(ctx);
+        }
+        if (v === "_pct") {
+          s.awaitingText = async (text) => {
+            await deleteUserMsg(ctx);
+            const cur = panelOf(ctx);
+            const r = parsePctRange(text, cur.side);
+            if ("error" in r) return renderAddPanel(ctx, `⛔ ${r.error}`);
+            cur.range = { kind: "pct", ...r };
+            await renderAddPanel(ctx);
+          };
+          const hint =
+            p.side === "one_sided_sol"
+              ? "SOL side: atas tetap 0%. Ketik % turun, mis. `50` atau `0-50` (= −50%..0%), `70`."
+              : p.side === "one_sided_token"
+              ? "Token side: bawah tetap 0%. Ketik % naik, mis. `50` atau `0-50` (= 0%..+50%)."
+              : "Double side: ketik `-50 +20` (= −50%..+20%), `50 20`, atau `30` (= ±30%).";
+          return showSub(ctx, `📏 Range % · ${hint}\nBins dihitung dari bin step (maks 1400).`, BACK_KB());
         }
         if (v === "_price") {
           s.awaitingText = async (text) => {
@@ -496,6 +527,9 @@ function settingsKb(): InlineKeyboard {
     .text("✏️ Amount presets", "st:edit:presets")
     .row()
     .text("✏️ Bin presets", "st:edit:bins")
+    .text("✏️ Range % presets", "st:edit:pct")
+    .row()
+    .text("✏️ Mix ratio", "st:edit:mix")
     .row()
     .text("⬅️ Menu", "menu:cancel");
 }
@@ -520,9 +554,23 @@ export function parsePresets(text: string): number[] | null {
   return arr;
 }
 
+export function parsePctPresets(text: string): { down: number; up: number }[] | null {
+  const parts = text.split(/[,;\n]+/).map((x) => x.trim()).filter(Boolean);
+  if (!parts.length || parts.length > 4) return null;
+  const out: { down: number; up: number }[] = [];
+  for (const part of parts) {
+    const r = parsePctRange(part, "two_sided");
+    if ("error" in r) return null;
+    // a bare "50" / "0-50" means −50% (mirrored to +50% on token side)
+    const bare = /^\d+(\.\d+)?$/.test(part) || /^0\s*-\s*\d/.test(part);
+    out.push(bare ? { down: Math.max(r.down, r.up), up: 0 } : r);
+  }
+  return out;
+}
+
 export function parseBinPresets(text: string): { narrow: number; medium: number; wide: number } | null {
   const a = text.split(/[\s,;]+/).filter(Boolean).map(Number);
-  if (a.length !== 3 || !a.every((n) => Number.isInteger(n) && n >= 1 && n <= 69)) return null;
+  if (a.length !== 3 || !a.every((n) => Number.isInteger(n) && n >= 1 && n <= 1399)) return null;
   return { narrow: a[0], medium: a[1], wide: a[2] };
 }
 
@@ -562,7 +610,7 @@ export function registerSettingsPanel(bot: Bot): void {
     getSession(key(ctx)).awaitingText = null;
     await renderSettings(ctx);
   });
-  bot.callbackQuery(/^st:edit:(swap|liq|presets|bins|prio|jupmax)$/, async (ctx) => {
+  bot.callbackQuery(/^st:edit:(swap|liq|presets|bins|prio|jupmax|pct|mix)$/, async (ctx) => {
     await ctx.answerCallbackQuery();
     const s = getSession(key(ctx));
     s.data.settingsMsgId = ctx.callbackQuery.message?.message_id ?? s.data.settingsMsgId;
@@ -582,9 +630,25 @@ export function registerSettingsPanel(bot: Bot): void {
           saveSettings(st);
           return renderSettings(ctx, "Tersimpan.");
         }
+        if (f === "pct") {
+          const list = parsePctPresets(text);
+          if (!list) return renderSettings(ctx, "Format: dipisah koma, mis. `50, 70` atau `0-50, -40 +10` (maks 4).");
+          const st = loadSettings();
+          st.rangePresets = list;
+          saveSettings(st);
+          return renderSettings(ctx, "Range % presets tersimpan (SOL side = turun, token side = naik).");
+        }
+        if (f === "mix") {
+          const n = Math.round(Number(text.trim().replace("%", "").split(/[\/\s]/)[0]));
+          if (!Number.isFinite(n) || n < 1 || n > 99) return renderSettings(ctx, "Ketik % BidAsk 1–99 (contoh: 70 → 70/30).");
+          const st = loadSettings();
+          st.mixBidAskPct = n;
+          saveSettings(st);
+          return renderSettings(ctx, `Mix ${n}/${100 - n} tersimpan.`);
+        }
         if (f === "bins") {
           const bp = parseBinPresets(text);
-          if (!bp) return renderSettings(ctx, "Format: 3 angka bins 1–69 (narrow medium wide), contoh: 20 40 69");
+          if (!bp) return renderSettings(ctx, "Format: 3 angka bins 1–1399 (narrow medium wide), contoh: 20 40 69");
           const st = loadSettings();
           st.binPresets = bp;
           saveSettings(st);
@@ -611,8 +675,12 @@ export function registerSettingsPanel(bot: Bot): void {
         ? `Ketik priority fee DLMM dalam µlamports/CU (0 atau 'auto' = otomatis). Sekarang: ${loadSettings().priorityFeeMicroLamports || "auto"}`
         : f === "jupmax"
         ? `Ketik batas priority fee Jupiter per swap dalam lamports (0 = mati, 1000000 = 0.001 SOL). Sekarang: ${loadSettings().jupPriorityMaxLamports}`
+        : f === "pct"
+        ? `Ketik range % presets dipisah koma (maks 4), mis. \`50, 70\` atau \`0-50, -40 +10\`. Sekarang: ${loadSettings().rangePresets.map((r) => pctLabel(r)).join(", ")}`
+        : f === "mix"
+        ? `Ketik % BidAsk untuk strategi Mix (sisanya Spot), mis. 70. Sekarang: ${loadSettings().mixBidAskPct}`
         : f === "bins"
-        ? `Ketik 3 angka bins narrow medium wide (1–69). Sekarang: ${Object.values(loadSettings().binPresets).join(" ")}`
+        ? `Ketik 3 angka bins narrow medium wide (1–1399). Sekarang: ${Object.values(loadSettings().binPresets).join(" ")}`
         : f === "presets"
         ? `Ketik amount presets SOL (contoh: 0.5 1 2). Sekarang: ${loadSettings().amountPresets.join(", ")}`
         : `Ketik ${f === "swap" ? "SWAP" : "LIQ"} slippage % (0.1–50). Sekarang: ${f === "swap" ? getSwapSlippagePct() : getLiqSlippagePct()}%`;

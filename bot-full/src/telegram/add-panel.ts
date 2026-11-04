@@ -6,7 +6,10 @@ import { InlineKeyboard } from "grammy";
 import { fmtNum, fmtUsd, shortAddr } from "../format.js";
 import { getStrategy, listStrategies, requireStrategy } from "../strategies/index.js";
 
-export const MAX_BINS_PER_POSITION = 69;
+/** bins below+above (position width = total+1 incl. active bin) — Meteora max width 1400. */
+export const MAX_BINS_PER_POSITION = 1399;
+/** ≤ this many bins → single-tx deploy; above → wide multi-tx (extended position). */
+export const SINGLE_TX_BINS = 69;
 
 export type BinPresets = { narrow: number; medium: number; wide: number };
 export const DEFAULT_BIN_PRESETS: BinPresets = { narrow: 20, medium: 40, wide: 69 };
@@ -16,7 +19,9 @@ export type PresetId = (typeof PRESET_IDS)[number];
 export type PanelRange =
   | { kind: "preset"; presetId: PresetId; bins: number }
   | { kind: "bins"; below: number; above: number }
-  | { kind: "price"; min: number; max: number };
+  | { kind: "price"; min: number; max: number }
+  /** % from active price: down = −X%, up = +Y% */
+  | { kind: "pct"; down: number; up: number };
 
 export type PanelSide = "one_sided_sol" | "one_sided_token" | "two_sided";
 
@@ -103,6 +108,13 @@ export function computeRange(p: AddPanelState, binStep: number, activePrice?: nu
     above = p.range.above;
     if (below + above > MAX_BINS_PER_POSITION)
       error = `Range ${below + above} bins > ${MAX_BINS_PER_POSITION} (batas 1 posisi). Kecilkan bins.`;
+  } else if (p.range.kind === "pct") {
+    const pr = sidePct(p.side, p.range);
+    below = r > 1 && pr.down > 0 ? Math.ceil(-Math.log(1 - pr.down / 100) / Math.log(r)) : 0;
+    above = r > 1 && pr.up > 0 ? Math.ceil(Math.log(1 + pr.up / 100) / Math.log(r)) : 0;
+    if (r <= 1) error = "Bin step pool belum diketahui — pilih ulang pool.";
+    else if (below + above > MAX_BINS_PER_POSITION)
+      error = `Range ${below + above} bins > ${MAX_BINS_PER_POSITION} (batas 1 posisi Meteora 1400). Kecilkan %.`;
   } else {
     if (!activePrice || r <= 1) {
       below = 0;
@@ -151,6 +163,62 @@ export function parseBins(text: string): { below: number; above: number } | null
   return { below, above };
 }
 
+/** Side rules: SOL side → upper fixed 0%; token side → lower fixed 0%; two-sided → both. */
+export function sidePct(side: PanelSide, r: { down: number; up: number }): { down: number; up: number } {
+  if (side === "one_sided_sol") return { down: r.down || r.up, up: 0 };
+  if (side === "one_sided_token") return { down: 0, up: r.up || r.down };
+  return { down: r.down, up: r.up };
+}
+
+/**
+ * Parse a % range.
+ *  SOL side:   "50" | "0-50" | "-50"          → −50% .. 0%
+ *  Token side: "50" | "0-50" | "+50"          → 0% .. +50%
+ *  Two-sided:  "-50 +20" | "-50..+20" | "50 20" → −50% .. +20%  ("30" → ±30%)
+ */
+export function parsePctRange(text: string, side: PanelSide): { down: number; up: number } | { error: string } {
+  const t = text.trim().replace(/%/g, "").replace(/,/g, ".").replace(/\.\.|\/|to|s\/d/gi, " ");
+  const m = t.match(/[+-]?\d+(?:\.\d+)?/g);
+  if (!m || m.length > 2) return { error: "Format % tidak valid. Contoh: 50, 0-50, -50 +20" };
+  // "0-50" style (unsigned a-b) → numbers a and b
+  const nums = m.map((x) => ({ v: Math.abs(Number(x)), sign: x.startsWith("+") ? 1 : x.startsWith("-") ? -1 : 0 }));
+  const isDash = /^\s*\d+(?:\.\d+)?\s*-\s*\d+(?:\.\d+)?\s*$/.test(t);
+  if (isDash) nums[1].sign = 0;
+  let down = 0;
+  let up = 0;
+  if (side !== "two_sided") {
+    // one bound fixed at 0%: take the non-zero magnitude ("0-50" → 50)
+    const nz = nums.filter((n) => n.v > 0);
+    if (nz.length > 1) return { error: side === "one_sided_sol" ? "SOL side: batas atas tetap 0% — isi % turun saja (mis. 50 atau 0-50)." : "Token side: batas bawah tetap 0% — isi % naik saja (mis. 50 atau 0-50)." };
+    const v = nz[0]?.v ?? 0;
+    if (side === "one_sided_sol") down = v;
+    else up = v;
+  } else if (nums.length === 1) {
+    const n = nums[0];
+    if (n.sign < 0) down = n.v;
+    else if (n.sign > 0) up = n.v;
+    else down = up = n.v;
+  } else {
+    const [a, b] = nums;
+    if (isDash) [down, up] = [a.v, b.v];
+    else {
+      for (const n of [a, b]) {
+        if (n.sign < 0) down = n.v;
+        else if (n.sign > 0) up = n.v;
+      }
+      if (a.sign === 0 && b.sign === 0) [down, up] = [a.v, b.v];
+    }
+  }
+  if (!(down >= 0 && down < 100)) return { error: "% turun harus 0–99.9" };
+  if (!(up >= 0 && up <= 10_000)) return { error: "% naik harus 0–10000" };
+  if (down + up <= 0) return { error: "Range % tidak boleh 0" };
+  return { down, up };
+}
+
+export function pctLabel(r: { down: number; up: number }): string {
+  return `${r.down ? `−${fmtNum(r.down, 1)}%` : "0%"}..${r.up ? `+${fmtNum(r.up, 1)}%` : "0%"}`;
+}
+
 export function parsePriceRange(text: string): { min: number; max: number } | null {
   const parts = text.trim().replace(/,/g, ".").split(/\s+/).map(Number);
   if (parts.length < 2 || !parts.every((x) => Number.isFinite(x) && x > 0) || parts[0] >= parts[1]) return null;
@@ -160,6 +228,7 @@ export function parsePriceRange(text: string): { min: number; max: number } | nu
 export function rangeLabel(r: PanelRange): string {
   if (r.kind === "preset") return `${r.presetId} (${r.bins} bins)`;
   if (r.kind === "bins") return `custom ${r.below} bawah / ${r.above} atas`;
+  if (r.kind === "pct") return `custom ${pctLabel(r)}`;
   return `custom harga ${fmtNum(r.min, 8)} – ${fmtNum(r.max, 8)}`;
 }
 
@@ -171,6 +240,7 @@ export function rangeDetailLines(c: ComputedRange, solUsd?: number | null): stri
   if (c.minPrice != null && c.maxPrice != null)
     lines.push(`     harga ${fmtNum(c.minPrice, 10)}${usd(c.minPrice)} → ${fmtNum(c.maxPrice, 10)}${usd(c.maxPrice)} SOL`);
   if (c.clamped) lines.push(`     ⚠️ Custom harga dipotong ke ${MAX_BINS_PER_POSITION} bins (batas 1 posisi).`);
+  if (!c.error && c.total > SINGLE_TX_BINS) lines.push(`     🧱 Posisi lebar (>${SINGLE_TX_BINS} bins) → multi-tx, rent posisi lebih besar (kembali saat close)`);
   if (c.error) lines.push(`     ⛔ ${c.error}`);
   return lines;
 }
@@ -320,11 +390,25 @@ export function panelKeyboard(
   return kb;
 }
 
-export function rangePickerKeyboard(p: AddPanelState, presets: BinPresets = DEFAULT_BIN_PRESETS): InlineKeyboard {
+export function rangePickerKeyboard(
+  p: AddPanelState,
+  presets: BinPresets = DEFAULT_BIN_PRESETS,
+  pctPresets: { down: number; up: number }[] = [],
+): InlineKeyboard {
   const kb = new InlineKeyboard();
   const cur = p.range.kind === "preset" ? p.range.presetId : "";
   for (const id of PRESET_IDS) kb.text(tick(id === cur, `${clampBins(presets[id])}b`), `ap:set:rng:${id}`);
+  if (pctPresets.length) {
+    kb.row();
+    pctPresets.slice(0, 4).forEach((pp, i) => {
+      const r = sidePct(p.side, pp);
+      const on = p.range.kind === "pct" && p.range.down === r.down && p.range.up === r.up;
+      kb.text(tick(on, pctLabel(r).replace("..", "/")), `ap:set:rng:_pp${i}`);
+    });
+  }
   return kb
+    .row()
+    .text("✏️ Range %", "ap:set:rng:_pct")
     .row()
     .text("✏️ Bins", "ap:set:rng:_bins")
     .text("✏️ Harga", "ap:set:rng:_price")

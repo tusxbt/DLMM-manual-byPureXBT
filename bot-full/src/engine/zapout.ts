@@ -142,6 +142,7 @@ export async function executeZapout(input: {
   poolName?: string;
   analysis?: ZapoutAnalysis;
   onStage?: (stage: "close" | "swap") => void | Promise<void>;
+  onProgress?: (done: number, total: number, label: string) => void | Promise<void>;
 }): Promise<ZapoutExecResult> {
   const cfg = loadConfig({ requireTelegram: false });
   const steps: ZapoutExecResult["steps"] = [];
@@ -245,7 +246,7 @@ export async function executeZapout(input: {
     for (let i = 0; i < removeTxs.length; i++) {
       items.push(serializeTx(await withBlockhash(removeTxs[i], user), `zapout_close_${i + 1}`));
     }
-    const r = await executePendingTxs(items); // confirms at "confirmed"
+    const r = await executePendingTxs(items, [], { onProgress: input.onProgress }); // confirms at "confirmed"
     allSigs.push(...r.signatures);
     if (!r.success) {
       steps.push({ step: "claim_remove_close", ok: false, detail: r.error || "remove/close gagal", signatures: r.signatures });

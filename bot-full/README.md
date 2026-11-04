@@ -198,3 +198,21 @@ Back up **both** together, stored separately and offline:
 - `WALLET_ENCRYPTION_KEY` from `.env`.
 
 Without the key the wallet files are useless; with both, anyone can spend the funds. Removing a user in /admin only revokes access — their encrypted wallet file stays so funds remain recoverable (users can also 📤 Withdraw SOL from 👛 Wallet, with Confirm + `MAX_SWAP_USD` cap).
+
+## Range lebar (>69 bins, maks 1400) & Range %
+
+- Default tetap preset bins (20/40/69). Di panel /add → ✏️ Range: preset bins, preset % (atur di Settings → ✏️ Range % presets), atau **✏️ Range %**:
+  - SOL side: atas tetap 0% → ketik `50` atau `0-50` = −50%..0%
+  - Token side: bawah tetap 0% → `50` / `0-50` = 0%..+50%
+  - Double side: `-50 +20`, `-50..+20`, `50 20`, atau `30` (±30%)
+  - Bins dihitung dari bin step pool dan selalu ditampilkan bersama % dan harga.
+- ≤69 bins → 1 tx seperti biasa. >69 bins → posisi lebar (extended): tx buat+extend posisi, lalu add liquidity per ±70 bins.
+- Preview menampilkan jumlah tx, rent posisi (kembali saat close) dan rent bin array baru (TIDAK kembali).
+- Jika deploy berhenti di tengah: pesan gagal punya tombol **▶️ Retry / lanjutkan** (kirim sisa chunk, distribusi dihitung ulang dari harga sekarang) dan **🚪 Exit**.
+- Exit/Zapout/Claim/Reshape posisi lebar dikirim multi-tx berurutan dengan retry blockhash; status menampilkan progres `n/N tx`.
+- `MAX_POSITION_USD` tetap berlaku.
+
+## Strategi Mix
+
+- Mix = BidAsk X% + Spot (100−X)% di posisi & range yang sama (default 70/30, Settings → ✏️ Mix ratio).
+- Satu Confirm untuk keduanya; preview menampilkan pembagian. Jika langkah Spot gagal → ▶️ Retry / 🚪 Exit. Kartu posisi menampilkan `Mix 70/30`.

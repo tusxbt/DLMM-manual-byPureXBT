@@ -15,7 +15,8 @@ import { PublicKey } from "@solana/web3.js";
 import { getSession, resetSession } from "./session.js";
 import { mainMenuKeyboard, CANCEL_KB, confirmKeyboard } from "./menus.js";
 import { loadSettings } from "../store/settings.js";
-import { addTrackedPosition, loadTrackedPositions, removeTrackedPosition } from "../store/positions.js";
+import { addTrackedPosition, loadTrackedPositions, removeTrackedPosition, upsertTrackedPosition, getTrackedPosition } from "../store/positions.js";
+import { partialKb, registerWideUi } from "./wide-ui.js";
 import { searchPools, listLivePositions, getActiveBin } from "../engine/dlmm-read.js";
 import { buildAddLiquidityTxs, buildClaimFeeTxs, buildRemoveAndCloseTxs, binsFromPct } from "../engine/dlmm-build.js";
 import { getBalances } from "../engine/connection.js";
@@ -84,6 +85,7 @@ export function createBot(): Bot {
     });
   });
   registerUsersUi(bot);
+  registerWideUi(bot);
 
   const withBottomBar = async (ctx: Context) => {
     const me = currentUser();
@@ -351,6 +353,9 @@ async function runClose(ctx: Context, req: ConfirmRequest, statusMsgId?: number)
       onStage: async (st) => {
         if (st === "swap") msgId = await setStatus(ctx, msgId, `⏳ Swap ${pair} ke SOL…`);
       },
+      onProgress: async (d, n) => {
+        msgId = await setStatus(ctx, msgId, `⏳ ${closeTitle(kind, pair)}… ${d}/${n} tx`);
+      },
     });
     markConfirm(id, result.success ? "executed" : "failed", result.message);
     let solReceived: number | null = null;
@@ -379,8 +384,13 @@ async function executeConfirmed(ctx: Context, req: ConfirmRequest, statusMsgId?:
   const id = req.id;
   markConfirm(id, "confirmed"); // prevents double execution (double tap / auto + tap)
   if (req.purpose === "remove" || req.purpose === "zapout") return runClose(ctx, req, statusMsgId);
+    let progMsg = statusMsgId ?? ctx.callbackQuery?.message?.message_id;
     try {
-      const result = await runConfirmedAction(req.purpose, req.payload);
+      const result = await runConfirmedAction(req.purpose, req.payload, {
+        onProgress: async (d, n) => {
+          progMsg = await setStatus(ctx, progMsg, `⏳ ${PURPOSE_LABEL[req.purpose] ?? req.purpose}… ${d}/${n} tx`);
+        },
+      });
       markConfirm(id, result.success ? "executed" : "failed", result.message);
       const sigLines = (result.signatures || [])
         .map((s) => sigLine(s))
@@ -394,7 +404,7 @@ async function executeConfirmed(ctx: Context, req: ConfirmRequest, statusMsgId?:
         ]
           .filter(Boolean)
           .join("\n"),
-        { reply_markup: mainMenuKeyboard() },
+        { reply_markup: result.keyboard ?? mainMenuKeyboard() },
       );
     } catch (e) {
       markConfirm(id, "failed", (e as Error).message);
@@ -406,47 +416,72 @@ async function executeConfirmed(ctx: Context, req: ConfirmRequest, statusMsgId?:
 async function runConfirmedAction(
   purpose: string,
   payload: Record<string, unknown>,
-  hooks: { onStage?: (stage: "close" | "swap") => void | Promise<void> } = {},
-): Promise<{ success: boolean; signatures?: string[]; message?: string; error?: string }> {
+  hooks: {
+    onStage?: (stage: "close" | "swap") => void | Promise<void>;
+    onProgress?: (done: number, total: number, label: string) => void | Promise<void>;
+  } = {},
+): Promise<{ success: boolean; signatures?: string[]; message?: string; error?: string; keyboard?: InlineKeyboard }> {
   if (purpose === "add") {
     const txs = payload.txs as PendingTxItem[];
     const meta = (payload.meta || {}) as Record<string, unknown>;
     const costUsd = Number(payload.cost_usd || 0);
     assertUsdCap("position", costUsd);
-    const result = await executePendingTxs(txs);
-    if (result.success && !result.dryRun) {
-      addTrackedPosition({
-        position: String(meta.position),
-        pool: String(meta.pool),
-        pool_name: String(meta.pool_name || ""),
-        strategy: String(meta.strategy || ""),
-        amount_sol: Number(meta.amount_sol || 0),
-        min_bin: Number(meta.min_bin || 0),
-        max_bin: Number(meta.max_bin || 0),
-        opened_at: new Date().toISOString(),
-        cost_usd: costUsd,
-        entry_price: Number(meta.entry_price) || undefined,
-      });
-    } else if (result.success && result.dryRun) {
-      addTrackedPosition({
-        position: String(meta.position),
-        pool: String(meta.pool),
-        pool_name: String(meta.pool_name || ""),
-        strategy: String(meta.strategy || ""),
-        amount_sol: Number(meta.amount_sol || 0),
-        min_bin: Number(meta.min_bin || 0),
-        max_bin: Number(meta.max_bin || 0),
-        opened_at: new Date().toISOString(),
-        cost_usd: costUsd,
-        entry_price: Number(meta.entry_price) || undefined,
-      });
-    }
-    return {
-      success: result.success,
-      signatures: result.signatures,
-      message: result.message || (result.success ? `📍 Posisi \`${String(meta.position)}\`` : result.error),
-      error: result.error,
+    const result = await executePendingTxs(txs, [], { onProgress: hooks.onProgress });
+    const posAddr = String(meta.position);
+    const prev = meta.resume ? getTrackedPosition(posAddr) : undefined;
+    const base = {
+      position: posAddr,
+      pool: String(meta.pool),
+      pool_name: String(meta.pool_name || ""),
+      strategy: String(meta.strategy || ""),
+      amount_sol: Number(meta.amount_sol || 0),
+      min_bin: Number(meta.min_bin || 0),
+      max_bin: Number(meta.max_bin || 0),
+      opened_at: prev?.opened_at || new Date().toISOString(),
+      cost_usd: prev?.cost_usd ?? costUsd,
+      entry_price: prev?.entry_price ?? (Number(meta.entry_price) || undefined),
+      strategy_label: (meta.strategy_label as string | undefined) ?? prev?.strategy_label,
     };
+    if (result.success) {
+      upsertTrackedPosition(base); // clears any partial state
+      return {
+        success: true,
+        signatures: result.signatures,
+        message: result.message || `📍 Posisi \`${posAddr}\`${meta.wide ? ` · ${base.max_bin - base.min_bin + 1} bins` : ""}`,
+      };
+    }
+    const landed = result.landedLabels || [];
+    const positionExists = !!meta.resume || landed.includes("createPos_1") || landed.includes("initializePositionAndAddLiquidity");
+    const multi = !!(meta.wide || meta.mix_pct || prev?.partial);
+    if (multi && positionExists && !result.dryRun) {
+      const pp = prev?.partial;
+      const isWide = !!(meta.wide ?? pp?.wide);
+      const addTotal = Number(pp?.add_total ?? meta.add_tx_count ?? 0);
+      const addDone = Math.min(addTotal, Number(pp?.add_done ?? 0) + landed.filter((l) => l.startsWith("addChunk")).length);
+      const mixTotal = Number(pp?.mix_total ?? meta.mix_spot_tx_count ?? 0);
+      const mixDone = Math.min(mixTotal, Number(pp?.mix_done ?? 0) + landed.filter((l) => l.startsWith("mixSpot")).length);
+      const partial = {
+        wide: isWide,
+        add_done: isWide ? addDone : 0,
+        add_total: isWide ? addTotal : 0,
+        amount_x_atomic: String(meta.amount_x_atomic ?? pp?.amount_x_atomic ?? "0"),
+        amount_y_atomic: String(meta.amount_y_atomic ?? pp?.amount_y_atomic ?? "0"),
+        strategy_key: String(meta.strategy_key ?? pp?.strategy_key ?? "BidAsk"),
+        mix_done: mixDone,
+        mix_total: mixTotal,
+        mix_spot_x_atomic: String(meta.mix_spot_x_atomic ?? pp?.mix_spot_x_atomic ?? "0"),
+        mix_spot_y_atomic: String(meta.mix_spot_y_atomic ?? pp?.mix_spot_y_atomic ?? "0"),
+      };
+      upsertTrackedPosition({ ...base, partial });
+      const stage = isWide && addDone < addTotal ? `liquidity ${addDone}/${addTotal} chunk` : `Spot (Mix) ${mixDone}/${mixTotal}`;
+      return {
+        success: false,
+        signatures: result.signatures,
+        error: `Deploy sebagian (${stage}): ${result.error}`,
+        keyboard: partialKb(posAddr),
+      };
+    }
+    return { success: false, signatures: result.signatures, error: result.error };
   }
 
   if (purpose === "claim" || purpose === "remove") {
@@ -460,7 +495,7 @@ async function runConfirmedAction(
         ? await buildClaimFeeTxs({ poolAddress: pool, positionAddress: position })
         : await buildRemoveAndCloseTxs({ poolAddress: pool, positionAddress: position });
     const tBuild = Date.now() - t0;
-    const result = await executePendingTxs(txs);
+    const result = await executePendingTxs(txs, [], { onProgress: hooks.onProgress });
     if (purpose === "remove" && result.success) {
       removeTrackedPosition(position);
     }
@@ -511,6 +546,7 @@ async function runConfirmedAction(
       poolName: String(payload.pool_name || ""),
       analysis: payload.analysis as never,
       onStage: hooks.onStage,
+      onProgress: hooks.onProgress,
     });
     return {
       success: result.success,

@@ -28,6 +28,7 @@ export function strategyLabel(s: string): string {
     spot: "Spot",
     bid_ask: "Bid-Ask",
     curve: "Curve",
+    mix: "Mix",
     Spot: "Spot",
     BidAsk: "Bid-Ask",
     Curve: "Curve",

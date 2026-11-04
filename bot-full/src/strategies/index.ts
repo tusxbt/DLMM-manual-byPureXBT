@@ -9,10 +9,11 @@ import type { StrategyDefinition, StrategyId } from "./types.js";
 import spot from "./spot.js";
 import curve from "./curve.js";
 import bidAsk from "./bidask.js";
+import mix from "./mix.js";
 
 export * from "./types.js";
 
-const ALL_STRATEGIES: StrategyDefinition[] = [spot, curve, bidAsk];
+const ALL_STRATEGIES: StrategyDefinition[] = [spot, curve, bidAsk, mix];
 
 const byId = new Map(ALL_STRATEGIES.map((s) => [s.id, s]));
 

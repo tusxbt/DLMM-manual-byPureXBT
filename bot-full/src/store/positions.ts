@@ -15,7 +15,33 @@ export type TrackedPosition = {
   cost_usd?: number;
   /** active price (SOL per token) at deploy, for PnL card entry marker */
   entry_price?: number;
+  /** wide (>69 bins) deploy that stopped midway — resume or Exit */
+  partial?: {
+    add_done: number;
+    add_total: number;
+    amount_x_atomic: string;
+    amount_y_atomic: string;
+    strategy_key: string;
+    /** Mix: spot stage */
+    mix_done?: number;
+    mix_total?: number;
+    mix_spot_x_atomic?: string;
+    mix_spot_y_atomic?: string;
+    wide?: boolean;
+  };
+  /** display label, e.g. "Mix 70/30" */
+  strategy_label?: string;
 };
+
+export function upsertTrackedPosition(p: TrackedPosition): void {
+  const list = loadTrackedPositions().filter((x) => x.position !== p.position);
+  list.push(p);
+  saveTrackedPositions(list);
+}
+
+export function getTrackedPosition(position: string): TrackedPosition | undefined {
+  return loadTrackedPositions().find((x) => x.position === position);
+}
 
 type FileShape = { positions: TrackedPosition[] };
 

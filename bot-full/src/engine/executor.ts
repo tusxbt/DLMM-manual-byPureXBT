@@ -21,6 +21,8 @@ export type ExecResult = {
   message?: string;
   /** ms per tx (send → confirmed) */
   timings?: number[];
+  /** labels of txs that landed (in order) — used for partial multi-tx deploy state */
+  landedLabels?: string[];
 };
 
 export function assertUsdCap(kind: "position" | "swap", usd: number): void {
@@ -85,6 +87,7 @@ export function signLegacyPreserving(tx: Transaction, signers: Signer[]): Transa
 export async function executePendingTxs(
   items: PendingTxItem[],
   extraSigners: Signer[] = [],
+  opts: { onProgress?: (done: number, total: number, label: string) => void | Promise<void> } = {},
 ): Promise<ExecResult> {
   const cfg = loadConfig({ requireTelegram: false });
   if (cfg.dryRun) {
@@ -111,6 +114,7 @@ export async function executePendingTxs(
   const wallet = getWallet();
   const signatures: string[] = [];
   const timings: number[] = [];
+  const landedLabels: string[] = [];
 
   try {
     for (const item of items) {
@@ -118,12 +122,20 @@ export async function executePendingTxs(
       const sig = await sendWithRetry(item, [wallet, ...extraSigners, ...(item.coSigners || [])]);
       timings.push(Date.now() - t);
       signatures.push(sig);
+      landedLabels.push(item.label);
+      if (opts.onProgress && items.length > 1) {
+        try {
+          await opts.onProgress(signatures.length, items.length, item.label);
+        } catch {
+          /* UI only */
+        }
+      }
     }
-    return { success: true, signatures, timings };
+    return { success: true, signatures, timings, landedLabels };
   } catch (e) {
     const msg = (e as Error).message || String(e);
     log("exec", `failed: ${msg}`, "error");
-    return { success: false, signatures, error: msg, timings };
+    return { success: false, signatures, error: msg, timings, landedLabels };
   }
 }
 

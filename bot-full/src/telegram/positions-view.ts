@@ -6,7 +6,7 @@ import { presentConfirm, isAutoConfirm, AUTO_BADGE } from "./confirm-ui.js";
  */
 import { InlineKeyboard, type Bot, type Context } from "grammy";
 import { loadConfig, CONFIRM_TTL_MS } from "../config.js";
-import { fmtUsd, shortAddr } from "../format.js";
+import { fmtUsd, shortAddr, strategyLabel } from "../format.js";
 import { redactSecrets } from "../logger.js";
 import { getSession } from "./session.js";
 import { confirmKeyboard, mainMenuKeyboard } from "./menus.js";
@@ -60,7 +60,7 @@ export function kstTime(d = new Date()): string {
   return d.toLocaleTimeString("en-GB", { timeZone: "Asia/Seoul", hour12: false });
 }
 
-export type PositionCard = LivePosition & { pair?: string; pool_name?: string; entry_price?: number; opened_at?: string; cost_usd?: number };
+export type PositionCard = LivePosition & { pair?: string; pool_name?: string; entry_price?: number; opened_at?: string; cost_usd?: number; strategy_text?: string; partial?: boolean };
 
 export function renderPositionCard(p: PositionCard, now = new Date()): string {
   const pair = p.pair || "TOKEN/SOL";
@@ -70,12 +70,16 @@ export function renderPositionCard(p: PositionCard, now = new Date()): string {
       : `${p.pnl_usd >= 0 ? "📈 +" : "📉 −"}$${Math.abs(p.pnl_usd).toFixed(2)} (${p.pnl_pct >= 0 ? "+" : "−"}${Math.abs(p.pnl_pct).toFixed(2)}%)`;
   const lines = [
     `**${pair}** · ${shortAddr(p.position)} [DLMM]`,
+    p.strategy_text || p.min_bin != null
+      ? `🧩 ${[p.strategy_text, p.min_bin != null && p.max_bin != null ? `${p.max_bin - p.min_bin + 1} bins` : null].filter(Boolean).join(" · ")}`
+      : null,
+    p.partial ? "⚠️ Deploy sebagian — buka ▶️ Retry / 🚪 Exit dari pesan gagal deploy" : null,
     "",
     `📊 Value: ${usdOrNa(p.total_value_usd)}`,
     pnl,
     `💵 Fee berjalan: ${usdOrNa(p.unclaimed_fees_usd)}`,
     "",
-  ];
+  ].filter((x): x is string => x !== null);
   if (p.min_price != null && p.max_price != null) {
     lines.push(`📐 ${fmtTinyPrice(p.min_price)}–${fmtTinyPrice(p.max_price)} (now ${fmtTinyPrice(p.active_price)}) ${pair}`);
     const bar = p.active_price ? rangeBar(p.min_price, p.max_price, p.active_price) : "";
@@ -136,6 +140,8 @@ async function loadCards(): Promise<PositionCard[]> {
       pool_name: t?.pool_name,
       opened_at: t?.opened_at,
       cost_usd: t?.cost_usd,
+      strategy_text: t ? t.strategy_label || (t.strategy ? strategyLabel(t.strategy) : undefined) : undefined,
+      partial: !!t?.partial,
       entry_price: t?.entry_price,
       pair: await pairName(p.pool, t?.pool_name || undefined),
     } as PositionCard);
@@ -229,7 +235,7 @@ function confirmFor(kind: "claim" | "remove", p: PositionCard, reposition: boole
     kind === "remove"
       ? [
           `${reposition ? "♻️ Reposition (1/2) · Exit" : "🚪 Exit"} **${p.pair}** · ≈${val}`,
-          reposition ? `Lalu panel Add ${Math.min(width, 69)} bins (perlu Confirm lagi) · ${mode} · ${CONFIRM_TTL_MS / 1000}s` : `${mode} · konfirmasi ${CONFIRM_TTL_MS / 1000}s`,
+          reposition ? `Lalu panel Add ${Math.min(width, 1399)} bins (perlu Confirm lagi) · ${mode} · ${CONFIRM_TTL_MS / 1000}s` : `${mode} · konfirmasi ${CONFIRM_TTL_MS / 1000}s`,
         ].join("\n")
       : [
           `💰 Claim fees **${p.pair}** · ${usdOrNa(p.unclaimed_fees_usd)}`,
@@ -244,7 +250,7 @@ function confirmFor(kind: "claim" | "remove", p: PositionCard, reposition: boole
       position: p.position,
       pool_name: p.pool_name,
       snapshot: kind === "remove" ? snapshotOf(p as unknown as Record<string, unknown>) : undefined,
-      ...(reposition ? { reposition: { bins: Math.max(1, Math.min(69, width)) } } : {}),
+      ...(reposition ? { reposition: { bins: Math.max(1, Math.min(1399, width)) } } : {}),
     },
   });
   return { text: summary, id: req.id };

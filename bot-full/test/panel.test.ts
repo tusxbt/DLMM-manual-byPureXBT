@@ -30,22 +30,23 @@ test("bin presets give same bin count regardless of binStep; % follows binStep",
   assert.equal(b.maxPrice, 1);
 });
 
-test("two-sided splits; presets clamp to 69", () => {
+test("two-sided splits; presets clamp to 1399", () => {
   assert.deepEqual(splitBins(41, "two_sided"), { below: 21, above: 20 });
-  let p = setRangePreset(defaultPanel(pool(100)), "wide", { narrow: 20, medium: 40, wide: 500 });
+  let p = setRangePreset(defaultPanel(pool(100)), "wide", { narrow: 20, medium: 40, wide: 5000 });
   assert.equal(p.range.kind === "preset" && p.range.bins, MAX_BINS_PER_POSITION);
   p = { ...p, side: "two_sided" };
-  assert.equal(computeRange(p, 100, 1).total, 69);
+  assert.equal(computeRange(p, 100, 1).total, 1399);
 });
 
-test("custom bins >69 rejected; custom price clamped with warning", () => {
+test("custom bins >1399 rejected; >69 allowed (wide); custom price clamped", () => {
   const p = { ...defaultPanel(pool(100)), amountSol: 1 };
-  const big = computeRange({ ...p, range: { kind: "bins", below: 60, above: 20 } }, 100, 1);
+  const big = computeRange({ ...p, range: { kind: "bins", below: 1300, above: 200 } }, 100, 1);
   assert.ok(big.error);
-  assert.deepEqual(panelMissing({ ...p, range: { kind: "bins", below: 60, above: 20 } }), ["Range"]);
-  const pr = computeRange({ ...p, range: { kind: "price", min: 0.1, max: 1.5 } }, 100, 1);
+  assert.deepEqual(panelMissing({ ...p, range: { kind: "bins", below: 1300, above: 200 } }), ["Range"]);
+  assert.ok(!computeRange({ ...p, range: { kind: "bins", below: 60, above: 20 } }, 100, 1).error);
+  const pr = computeRange({ ...p, range: { kind: "price", min: 1e-9, max: 1.5 } }, 100, 1);
   assert.equal(pr.clamped, true);
-  assert.ok(pr.total <= 69 && !pr.error);
+  assert.ok(pr.total <= 1399 && !pr.error);
   const ok = computeRange({ ...p, range: { kind: "price", min: 0.8, max: 1 } }, 100, 1);
   assert.equal(ok.clamped, false);
   assert.equal(ok.below, Math.ceil(Math.log(1 / 0.8) / Math.log(1.01)));
@@ -54,9 +55,10 @@ test("custom bins >69 rejected; custom price clamped with warning", () => {
 
 test("bin preset parsing / coercion", () => {
   assert.deepEqual(parseBinPresets("20 40 69"), { narrow: 20, medium: 40, wide: 69 });
-  assert.equal(parseBinPresets("20 40 70"), null);
+  assert.deepEqual(parseBinPresets("20 40 300"), { narrow: 20, medium: 40, wide: 300 });
+  assert.equal(parseBinPresets("20 40 1400"), null);
   assert.equal(parseBinPresets("20 40"), null);
-  assert.deepEqual(coerceBinPresets({ narrow: 5, medium: 999, wide: "x" }, { narrow: 20, medium: 40, wide: 69 }), { narrow: 5, medium: 69, wide: 69 });
+  assert.deepEqual(coerceBinPresets({ narrow: 5, medium: 9999, wide: "x" }, { narrow: 20, medium: 40, wide: 69 }), { narrow: 5, medium: 1399, wide: 69 });
 });
 
 test("default panel: only pool+amount missing, sensible defaults", () => {
