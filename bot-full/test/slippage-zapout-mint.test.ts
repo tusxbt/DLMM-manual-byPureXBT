@@ -91,9 +91,7 @@ test("zapout DRY_RUN with analysis; over-cap warns but does not throw", async ()
     estTokenOutUi: 10,
     estTokenOutUsd: 250,
     swapSlippagePct: 10,
-    overSwapCap: true,
-    maxSwapUsd: 100,
-    warnOverCap: "⚠️ over",
+    warnOverCap: null,
   };
   const { executeZapout } = await import("../src/engine/zapout.js");
   const { createConfirm, resetConfirmStoreForTests } = await import("../src/engine/confirm.js");

@@ -63,25 +63,15 @@ test("whitelist: only ALLOWED_TELEGRAM_USER_IDS authorized", async () => {
   assert.equal(isAuthorized(mk(111, 12345)), false); // wrong chat
 });
 
-test("assertUsdCap: only MAX_SWAP_USD remains; no position cap", async () => {
-  process.env.DLMM_SKIP_ENV_CHMOD = "1";
-  process.env.ALLOWED_TELEGRAM_USER_IDS = "1";
-  process.env.TELEGRAM_BOT_TOKEN = "t";
-  process.env.TELEGRAM_CHAT_ID = "1";
-  process.env.RPC_URL = "https://api.mainnet-beta.solana.com";
-  process.env.WALLET_PRIVATE_KEY = freshTestKey();
-  process.env.MAX_SWAP_USD = "100";
-  process.env.DRY_RUN = "true";
-
+test("no USD caps: MAX_SWAP_USD ignored, assertUsdCap gone", async () => {
+  process.env.MAX_SWAP_USD = "1";
+  const ex = await import("../src/engine/executor.js");
+  assert.equal("assertUsdCap" in ex, false);
   const { resetConfigForTests, loadConfig } = await import("../src/config.js");
   resetConfigForTests();
-  loadConfig({ requireTelegram: false });
-  const { assertUsdCap } = await import("../src/engine/executor.js");
-
-  assert.doesNotThrow(() => assertUsdCap("swap", 50));
-  assert.equal("maxPositionUsd" in loadConfig({ requireTelegram: false }), false);
-  assert.throws(() => assertUsdCap("swap", 250), /Ditolak.*SWAP/);
+  assert.equal("maxSwapUsd" in loadConfig({ requireTelegram: false }), false);
 });
+
 
 test("confirm flow: create, cancel, expire, confirm take", async () => {
   const {
@@ -158,5 +148,5 @@ test("loadConfig derives public key and defaults DRY_RUN true", async () => {
   assert.equal(cfg.walletPublicKey.toBase58(), kp.publicKey.toBase58());
   assert.equal(cfg.dryRun, true);
   assert.equal("maxPositionUsd" in cfg, false);
-  assert.equal(cfg.maxSwapUsd, 100);
+  assert.equal("maxSwapUsd" in cfg, false);
 });

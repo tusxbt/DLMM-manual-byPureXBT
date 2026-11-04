@@ -7,7 +7,7 @@ Bot self-host untuk deploy / claim / remove / swap posisi [Meteora DLMM](https:/
 > Bot ini **menandatangani transaksi sendiri** memakai `WALLET_PRIVATE_KEY` dari file `.env`.
 >
 > 1. **Buat wallet Solana BARU yang terpisah** — jangan pakai wallet utama.
-> 2. Isi **dana kecil saja** (swap dibatasi `MAX_SWAP_USD`, default $100; ukuran posisi tanpa batas USD — hanya cek saldo SOL).
+> 2. Isi **dana kecil saja** (tanpa batas USD untuk swap maupun posisi — hanya cek saldo SOL).
 > 3. **Jangan pernah** kirim private key / seed phrase lewat chat Telegram, email, atau commit git.
 > 4. Isi key **sendiri** di file `.env` di server lokalmu, lalu:
 >    ```bash
@@ -36,7 +36,7 @@ Kalau kamu tidak nyaman menyimpan private key di server, pakai `bot-safe/` (tand
 
 Setiap deploy / swap / claim / remove menampilkan ringkasan + tombol **Confirm / Cancel** (timeout **60 detik**). Tidak ada trade otomatis / terjadwal.
 
-**Batas keras:** `MAX_SWAP_USD=100` (bisa diubah di `.env`). Ukuran posisi tidak dibatasi USD; sebelum Preview bot cek saldo SOL cukup (amount + rent + bin array + fee).
+**Tanpa batas USD:** swap dan ukuran posisi tidak dibatasi USD (`MAX_SWAP_USD` lama diabaikan); sebelum Preview bot cek saldo SOL cukup (amount + rent + bin array + fee).
 
 
 
@@ -50,7 +50,7 @@ Keluar dari posisi sekaligus:
 
 Satu ringkasan (est. USD, slippage) + Confirm/Cancel 60 detik. Tx berurutan; partial failure dilaporkan jelas. `DRY_RUN` mensimulasikan.
 
-**Cap:** zapout **dikecualikan** dari penolakan keras `MAX_SWAP_USD` (ini jalur exit), tetapi bot **memperingatkan** jika est. swap > cap.
+**Swap:** semua token non-SOL di-swap ke SOL; token tanpa rute Jupiter tetap di wallet.
 
 ## Slippage
 
@@ -109,7 +109,6 @@ nano .env   # isi sendiri — jangan paste key ke chat
 | `WALLET_PRIVATE_KEY` | ✅ | base58 secret — **wallet terpisah dana kecil** |
 | `RPC_URL` | ✅ | RPC mainnet (Helius dll) |
 | `DRY_RUN` | | default `true` |
-| `MAX_SWAP_USD` | | default `100` (batas swap; posisi tanpa cap USD) |
 | `HELIUS_API_KEY` / `JUPITER_API_KEY` | | opsional |
 
 ### BotFather
@@ -197,7 +196,7 @@ Back up **both** together, stored separately and offline:
 - `DATA_DIR/wallets/` (encrypted wallet files), and
 - `WALLET_ENCRYPTION_KEY` from `.env`.
 
-Without the key the wallet files are useless; with both, anyone can spend the funds. Removing a user in /admin only revokes access — their encrypted wallet file stays so funds remain recoverable (users can also 📤 Withdraw SOL from 👛 Wallet, with Confirm + `MAX_SWAP_USD` cap).
+Without the key the wallet files are useless; with both, anyone can spend the funds. Removing a user in /admin only revokes access — their encrypted wallet file stays so funds remain recoverable (users can also 📤 Withdraw SOL from 👛 Wallet, with Confirm).
 
 ## Range lebar (>69 bins, maks 1400) & Range %
 

@@ -429,10 +429,6 @@ export function renderClaimSellPreview(q: ClaimSellQuote, pair?: string): { text
     L.push("Tidak ada fee token untuk dijual — pakai 💼 Keep token.");
     return { text: L.join("\n"), blocked: true };
   }
-  if (q.overCap) {
-    L.push(`⛔ ${fmtUsd(q.tokenUsd)} > MAX_SWAP_USD ${fmtUsd(q.capUsd)} — swap ditolak. Pakai 💼 Keep token.`);
-    return { text: L.join("\n"), blocked: true };
-  }
   L.push(q.estSolOut != null ? `Est. keluar: ≈${q.estSolOut.toFixed(6)} SOL (+ fee SOL ${q.feeSolUi.toFixed(6)})` : `⚠️ Quote Jupiter gagal${q.quoteError ? `: ${q.quoteError.slice(0, 80)}` : ""} — dicoba lagi saat Confirm`);
   L.push("Jumlah jual = delta token hasil claim (bukan saldo wallet).");
   return { text: L.join("\n"), blocked: false };

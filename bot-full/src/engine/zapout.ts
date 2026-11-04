@@ -1,7 +1,6 @@
 import { getMintDecimals } from "./decimals.js";
 /**
  * /zapout — claim fees, remove 100% + close, swap all non-SOL token delta → SOL via Jupiter.
- * Exempt from hard MAX_SWAP_USD block (exit path); warns if estimated swap USD > cap.
  */
 import { PublicKey, Transaction } from "@solana/web3.js";
 import BN from "bn.js";
@@ -35,8 +34,6 @@ export type ZapoutAnalysis = {
   estTokenOutUi: number;
   estTokenOutUsd: number;
   swapSlippagePct: number;
-  overSwapCap: boolean;
-  maxSwapUsd: number;
   warnOverCap: string | null;
 };
 
@@ -95,7 +92,6 @@ export async function analyzeZapout(input: {
   const feeSolUi = atomicToUi(feeSolAtomic, 9);
   const estTokenOutUi = atomicToUi(estTokenOutAtomic, tokenDecimals);
   const estTokenOutUsd = estTokenOutUi * tokenPx;
-  const overSwapCap = estTokenOutUsd > cfg.maxSwapUsd;
   const swapSlippagePct = getSwapSlippagePct();
 
   return {
@@ -114,11 +110,7 @@ export async function analyzeZapout(input: {
     estTokenOutUi,
     estTokenOutUsd,
     swapSlippagePct,
-    overSwapCap,
-    maxSwapUsd: cfg.maxSwapUsd,
-    warnOverCap: overSwapCap
-      ? `⚠️ Est. swap ${estTokenOutUsd.toFixed(2)} USD > MAX_SWAP_USD=${cfg.maxSwapUsd}. Zapout tetap diizinkan (exit path), tapi lanjutkan hati-hati.`
-      : null,
+    warnOverCap: null,
   };
 }
 
@@ -137,8 +129,6 @@ export async function executeZapout(input: {
   poolName?: string;
   analysis?: ZapoutAnalysis;
   onStage?: (stage: "close" | "swap") => void | Promise<void>;
-  /** Auto zapout: never swap a token whose value > MAX_SWAP_USD (or unknown) — keep it in wallet. */
-  capSwap?: boolean;
   onProgress?: (done: number, total: number, label: string) => void | Promise<void>;
 }): Promise<ZapoutExecResult> {
   const cfg = loadConfig({ requireTelegram: false });
@@ -272,20 +262,7 @@ export async function executeZapout(input: {
   const tQuote = Date.now();
   const balAfter = await Promise.all(swapMints.map((m) => getTokenBalanceAtomic(m, user)));
   const deltas = swapMints.map((m, i) => ({ mint: m, delta: balAfter[i] - (balBefore[i] as bigint) }));
-  let todo = deltas.filter((d) => d.delta > 0n);
-  if (input.capSwap && todo.length) {
-    const px = await getUsdPrices(todo.map((d) => d.mint)).catch(() => ({}) as Record<string, number>);
-    const keep: string[] = [];
-    const ok: typeof todo = [];
-    for (const d of todo) {
-      const dec = await getMintDecimals(d.mint).catch(() => 9);
-      const usd = (Number(d.delta) / 10 ** dec) * ((px as Record<string, number>)[d.mint] ?? NaN);
-      if (Number.isFinite(usd) && usd <= cfg.maxSwapUsd) ok.push(d);
-      else keep.push(`${d.mint.slice(0, 4)}… ${Number.isFinite(usd) ? `$${usd.toFixed(2)}` : "harga n/a"}`);
-    }
-    if (keep.length) steps.push({ step: "swap_cap", ok: true, detail: `Swap dilewati (> MAX_SWAP_USD=${cfg.maxSwapUsd}), token tetap di wallet: ${keep.join(", ")}` });
-    todo = ok;
-  }
+  const todo = deltas.filter((d) => d.delta > 0n);
   if (!todo.length) {
     steps.push({ step: "swap", ok: true, detail: "Tidak ada token non-SOL untuk di-swap (delta ≤ 0)." });
     lap("total", t0);

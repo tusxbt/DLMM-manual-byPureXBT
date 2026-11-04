@@ -15,7 +15,6 @@ import { fmtNum, fmtUsd } from "../format.js";
 import { getSession, askPrompt, RETRY } from "./session.js";
 import { createConfirm } from "../engine/confirm.js";
 import { presentConfirm } from "./confirm-ui.js";
-import { assertUsdCap } from "../engine/executor.js";
 import type { PendingTxItem } from "../engine/pending.js";
 import { log } from "../logger.js";
 
@@ -51,7 +50,7 @@ export async function showWallet(ctx: Context): Promise<void> {
   const kb = new InlineKeyboard().text("🔄 Refresh", "w:show").text("📤 Withdraw SOL", "w:wd");
   if (isOwner()) kb.row().text("🛡 Admin", "adm:home");
   await ctx.reply(
-    walletText({ wallet: b.wallet, sol: b.sol, solUsd: solUsd ? b.sol_usd : null, usdc: b.usdc, totalUsd: solUsd ? b.total_usd : null, owner: isOwner(), dryRun: cfg.dryRun, capSwap: cfg.maxSwapUsd, error: b.error }),
+    walletText({ wallet: b.wallet, sol: b.sol, solUsd: solUsd ? b.sol_usd : null, usdc: b.usdc, totalUsd: solUsd ? b.total_usd : null, owner: isOwner(), dryRun: cfg.dryRun, error: b.error }),
     { reply_markup: kb },
   );
 }
@@ -69,7 +68,7 @@ export const onboardKb = () => new InlineKeyboard().text("🆕 Buat wallet", "w:
 
 export function walletText(w: {
   wallet: string; sol: number; solUsd: number | null; usdc: number; totalUsd: number | null;
-  owner: boolean; dryRun: boolean; capSwap: number; error?: string;
+  owner: boolean; dryRun: boolean; error?: string;
 }): string {
   return screen(
     `👛 Wallet${w.owner ? " · owner" : ""}`,
@@ -79,7 +78,7 @@ export function walletText(w: {
       kv("USDC", fmtNum(w.usdc)),
       kv("Total", w.totalUsd == null ? "n/a" : fmtUsd(w.totalUsd)),
     ]),
-    section("🔒 Batas", [kv("Mode", w.dryRun ? "🧪 DRY_RUN" : "⚠️ LIVE"), kv("Cap swap", fmtUsd(w.capSwap))]),
+    section("🔒 Batas", [kv("Mode", w.dryRun ? "🧪 DRY_RUN" : "⚠️ LIVE")]),
     w.error ? `⚠️ ${w.error}` : null,
   );
 }
@@ -114,7 +113,6 @@ async function askWithdraw(ctx: Context): Promise<void> {
         if (!Number.isFinite(amt) || amt <= 0) throw new Error("Jumlah tidak valid");
         if (amt > bal - fee + 1e-12) throw new Error(`Saldo kurang (${fmtNum(bal)} SOL)`);
         const usd = amt * (await getSolUsd());
-        assertUsdCap("swap", usd);
         const lamports = Math.floor(amt * LAMPORTS_PER_SOL);
         const summary = [`📤 Withdraw **${fmtNum(amt)} SOL** (≈${fmtUsd(usd)})`, `→ \`${to.toBase58()}\``, `${cfg.dryRun ? "🧪 DRY_RUN" : "⚠️ LIVE"} · konfirmasi ${CONFIRM_TTL_MS / 1000}s`].join("\n");
         const req = createConfirm({ purpose: "withdraw", summary, payload: { to: to.toBase58(), lamports, usd } });

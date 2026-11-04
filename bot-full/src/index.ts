@@ -9,7 +9,7 @@ const cfg = loadConfig();
 
 log(
   "boot",
-  `wallet=${cfg.walletPublicKey.toBase58()} dryRun=${cfg.dryRun} maxSwap=${cfg.maxSwapUsd}`,
+  `wallet=${cfg.walletPublicKey.toBase58()} dryRun=${cfg.dryRun}`,
 );
 log(
   "boot",

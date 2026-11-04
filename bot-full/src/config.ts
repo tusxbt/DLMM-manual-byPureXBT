@@ -16,7 +16,6 @@ export type AppConfig = {
   jupiterApiKey: string | null;
   dataDir: string;
   dryRun: boolean;
-  maxSwapUsd: number;
   tokens: { sol: string; usdc: string };
 };
 
@@ -62,17 +61,6 @@ function requireEnv(name: string): string {
     process.exit(1);
   }
   return v;
-}
-
-function parseUsdCap(name: string, fallback: number): number {
-  const raw = process.env[name]?.trim();
-  if (!raw) return fallback;
-  const n = Number(raw);
-  if (!Number.isFinite(n) || n <= 0) {
-    console.error(`[fatal] ${name} harus angka positif`);
-    process.exit(1);
-  }
-  return n;
 }
 
 export function loadConfig(opts?: { requireTelegram?: boolean; skipWallet?: boolean }): AppConfig {
@@ -147,7 +135,6 @@ function loadBaseConfig(opts?: { requireTelegram?: boolean; skipWallet?: boolean
     jupiterApiKey: process.env.JUPITER_API_KEY?.trim() || null,
     dataDir: process.env.DATA_DIR?.trim() || "./data",
     dryRun,
-    maxSwapUsd: parseUsdCap("MAX_SWAP_USD", 100),
     tokens: {
       sol: "So11111111111111111111111111111111111111112",
       usdc: "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",

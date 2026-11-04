@@ -25,19 +25,6 @@ export type ExecResult = {
   landedLabels?: string[];
 };
 
-/** Swap-size guard (MAX_SWAP_USD). Position size has no USD cap (SOL balance check only). */
-export function assertUsdCap(kind: "swap", usd: number): void {
-  const cfg = loadConfig({ requireTelegram: false, skipWallet: true });
-  const cap = cfg.maxSwapUsd;
-  if (!Number.isFinite(usd) || usd < 0) {
-    throw new Error(`Nilai USD tidak valid: ${usd}`);
-  }
-  if (usd > cap) {
-    throw new Error(
-      `Ditolak: ${kind} ${usd.toFixed(2)} USD > batas MAX_SWAP_USD=${cap}`,
-    );
-  }
-}
 
 /**
  * Pre-send check: every required signer in the message header has a valid signature.

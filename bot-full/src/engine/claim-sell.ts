@@ -1,6 +1,6 @@
 /**
  * Claim fees → sell ONLY the claimed non-SOL token (exact wallet delta from the claim) to SOL via Jupiter.
- * Respects MAX_SWAP_USD (assertUsdCap) and the swap slippage setting.
+ * No USD cap; uses the swap slippage setting.
  */
 import { PublicKey } from "@solana/web3.js";
 import { SOL_MINT, loadConfig } from "../config.js";
@@ -10,7 +10,7 @@ import { getMintDecimals } from "./decimals.js";
 import { getWalletPublicKey } from "./wallet.js";
 import { getUsdPrices } from "./prices.js";
 import { buildClaimFeeTxs } from "./dlmm-build.js";
-import { executePendingTxs, assertUsdCap } from "./executor.js";
+import { executePendingTxs } from "./executor.js";
 import { getSwapQuote, buildSwapTx } from "./jupiter-swap.js";
 import { jupiterSlippageBps } from "./slippage.js";
 import { getTokenBalanceAtomic } from "./reshape.js";
@@ -26,8 +26,6 @@ export type ClaimSellQuote = {
   feeSolUi: number;
   tokenUsd: number;
   estSolOut: number | null;
-  capUsd: number;
-  overCap: boolean;
   quoteError?: string;
 };
 
@@ -46,7 +44,6 @@ export async function quoteClaimSell(poolAddress: string, positionAddress: strin
   const dec = await getMintDecimals(tokenMint);
   const feeTokenUi = atomicToUi(feeTok, dec);
   const px = (await getUsdPrices([tokenMint]))[tokenMint] ?? 0;
-  const capUsd = loadConfig({ requireTelegram: false, skipWallet: true }).maxSwapUsd;
   const tokenUsd = feeTokenUi * px;
   let estSolOut: number | null = null;
   let quoteError: string | undefined;
@@ -58,7 +55,7 @@ export async function quoteClaimSell(poolAddress: string, positionAddress: strin
       quoteError = (e as Error).message;
     }
   }
-  return { pool: poolAddress, position: positionAddress, tokenMint, tokenDecimals: dec, feeTokenAtomic: feeTok.toString(), feeTokenUi, feeSolUi: atomicToUi(feeSol, 9), tokenUsd, estSolOut, capUsd, overCap: tokenUsd > capUsd, quoteError };
+  return { pool: poolAddress, position: positionAddress, tokenMint, tokenDecimals: dec, feeTokenAtomic: feeTok.toString(), feeTokenUi, feeSolUi: atomicToUi(feeSol, 9), tokenUsd, estSolOut, quoteError };
 }
 
 export async function executeClaimSell(q: ClaimSellQuote, hooks: { onProgress?: (d: number, n: number) => Promise<void> } = {}): Promise<{ success: boolean; signatures: string[]; message: string; error?: string }> {
@@ -72,12 +69,6 @@ export async function executeClaimSell(q: ClaimSellQuote, hooks: { onProgress?: 
   const delta = (await getTokenBalanceAtomic(q.tokenMint, user)) - before;
   if (delta <= 0n) return { success: true, signatures: claim.signatures, message: "Claim OK · fee token = 0, tidak ada yang dijual." };
   const ui = atomicToUi(delta, q.tokenDecimals);
-  const px = (await getUsdPrices([q.tokenMint]))[q.tokenMint] ?? 0;
-  try {
-    assertUsdCap("swap", ui * px);
-  } catch (e) {
-    return { success: false, signatures: claim.signatures, message: `Claim OK · swap ditolak: ${(e as Error).message}. Token tetap di wallet.`, error: (e as Error).message };
-  }
   const quote = await getSwapQuote({ inputMint: q.tokenMint, outputMint: SOL_MINT, amountAtomic: delta.toString(), slippageBps: jupiterSlippageBps() });
   const swap = await executePendingTxs([await buildSwapTx({ quote })]);
   const sigs = [...claim.signatures, ...swap.signatures];

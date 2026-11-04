@@ -6,7 +6,6 @@ process.env.DATA_DIR = fs.mkdtempSync(path.join(os.tmpdir(), "uis-"));
 process.env.ALLOWED_TELEGRAM_USER_IDS = "111";
 process.env.WALLET_ENCRYPTION_KEY = "a".repeat(64);
 process.env.DRY_RUN = "false";
-process.env.MAX_SWAP_USD = "100";
 async function main() {
   const out = process.argv[2] || "ui-samples.md";
   const { renderAddPreview } = await import("../src/telegram/preview.js");
@@ -33,7 +32,7 @@ async function main() {
   const list = renderPositionList([card as never, { ...card, pair: "BONK/SOL", in_range: false, meteora: null } as never], 0).text;
   const close = compactResult({ kind: "zapout", pair: "Donkey/SOL", success: true, signatures: ["a", "5xTxSig"], ms: 3012, realized: { solNet: 0.5509, tokenNet: {}, rentSol: 0.0574, feeSol: 0.0001, exitUsd: 49.97, pnlUsd: 0.91, pnlPct: 1.86 }, snapshot: { pool: "p", position: "q", total_value_usd: null, unclaimed_fees_usd: null, meteora: { ...met, closed: true } } });
   const closeErr = compactResult({ kind: "remove", pair: "AMD/SOL", success: false, signatures: [], ms: 1, error: "block height exceeded" });
-  const wallet = walletText({ wallet: "9xQeWvG816bUx9EPjHmaT23yvVM2ZWbrrpZb9PusVFin", sol: 1.2345, solUsd: 119.75, usdc: 12.5, totalUsd: 132.25, owner: true, dryRun: false, capSwap: 100 });
+  const wallet = walletText({ wallet: "9xQeWvG816bUx9EPjHmaT23yvVM2ZWbrrpZb9PusVFin", sol: 1.2345, solUsd: 119.75, usdc: 12.5, totalUsd: 132.25, owner: true, dryRun: false });
   const { poolBlock } = await import("../src/telegram/pool-format.js");
   const { renderPanelText, defaultPanel } = await import("../src/telegram/add-panel.js");
   const panel = renderPanelText({ ...defaultPanel({ pool: "5rCf1DM8LjKTw4YqhnoLcngyZYeNnQqztScTogYHAS6", name: "Donkey-SOL", bin_step: 100, fee_pct: 1, tvl: 182_000, fees_24h: 9_400, fees_total: 211_000, fee_tvl_24h_pct: 5.16, token_x: { symbol: "Donkey", mint: "M" } } as never), activePrice: 0.00000414, solUsd: 97, solBalance: 2.1, tokenBalance: 0, amountSol: 0.5, supply: 1_000_000_000 } as never, { liqSlippagePct: 10, dryRun: false });

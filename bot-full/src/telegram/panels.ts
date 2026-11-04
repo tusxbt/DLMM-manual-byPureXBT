@@ -558,7 +558,6 @@ export function settingsText(note?: string): string {
     ]),
     section("🔒 Dari .env", [
       kv("Mode", cfg.dryRun ? "🧪 DRY_RUN" : "⚠️ LIVE"),
-      kv("Cap swap", fmtUsd(cfg.maxSwapUsd)),
     ]),
   );
 }
@@ -647,7 +646,7 @@ export function registerSettingsPanel(bot: Bot): void {
           "",
           "Hanya aksi CLOSE yang langsung dikirim on-chain tanpa Confirm: 🚪 Exit (remove+close) dan ⚡ → SOL (zapout), termasuk langkah Exit di ♻️ Reposition.",
           "Deploy/Preview, swap, claim, flip/reshape, dan re-add Reposition TETAP butuh Confirm.",
-          "Tetap berlaku: whitelist, DRY_RUN, cek signer (zapout tetap dikecualikan dari MAX_SWAP_USD, hanya peringatan).",
+          "Tetap berlaku: whitelist, DRY_RUN, cek signer.",
           "Salah tekan Exit/⚡ = posisi langsung ditutup. Pakai hanya dengan wallet terpisah dana kecil.",
         ].join("\n"),
         kb,

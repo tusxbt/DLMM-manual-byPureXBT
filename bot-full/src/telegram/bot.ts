@@ -30,7 +30,7 @@ import { resolvePosition, clearCardsCache, showFlipPreview, showClaimSellPreview
 import { executeClaimSell } from "../engine/claim-sell.js";
 import { executeFlip } from "../engine/flip.js";
 import { registerTpslUi } from "./tpsl-ui.js";
-import { assertUsdCap, executePendingTxs } from "../engine/executor.js";
+import { executePendingTxs } from "../engine/executor.js";
 import { listStrategies, requireStrategy } from "../strategies/index.js";
 import { getSwapQuote, buildSwapTx, uiAmountToAtomic, normalizeMint } from "../engine/jupiter-swap.js";
 import { SOL_MINT, USDC_MINT } from "../config.js";
@@ -431,7 +431,7 @@ export const isAutoLocked = (position: string) => autoLocks.has(position);
 /**
  * Auto zapout (TP/SL with 🤖 ON): same executor path as manual zapout, signed with the user's
  * server-side wallet (caller must be inside runAsUser). Retries once; on failure DMs manual buttons.
- * Swaps above MAX_SWAP_USD are skipped (tokens stay in wallet).
+ * No swap cap; a token with no Jupiter route stays in the wallet.
  */
 export async function runAutoZapout(api: Bot["api"], chatId: string, p: { position: string; pool: string; pool_name?: string; pair?: string }, why: string): Promise<boolean> {
   if (autoLocks.has(p.position)) return false;
@@ -618,8 +618,6 @@ async function runConfirmedAction(
   }
 
   if (purpose === "swap") {
-    const usd = Number(payload.usd_estimate || 0);
-    assertUsdCap("swap", usd);
     const txs = payload.txs as PendingTxItem[];
     const result = await executePendingTxs(txs);
     return {
@@ -662,7 +660,6 @@ async function runConfirmedAction(
       positionAddress: String(payload.position),
       poolName: String(payload.pool_name || ""),
       analysis: payload.analysis as never,
-      capSwap: payload.auto === true,
       onStage: hooks.onStage,
       onProgress: hooks.onProgress,
     });
@@ -676,7 +673,6 @@ async function runConfirmedAction(
 
   if (purpose === "withdraw") {
     const cfg = loadConfig({ requireTelegram: false });
-    assertUsdCap("swap", Number(payload.usd));
     const item = await buildWithdrawTx(cfg.walletPublicKey, new PublicKey(String(payload.to)), Number(payload.lamports));
     const r = await executePendingTxs([item]);
     return { success: r.success, signatures: r.signatures, message: r.success ? "SOL terkirim." : r.message, error: r.error };
@@ -795,7 +791,6 @@ async function finishSwapAmount(ctx: Context, amtText: string): Promise<void> {
       // conservative: use SOL price * amt as rough upper bound only if tiny; else require USDC/SOL pairs for cap
       usdEstimate = amt; // treat UI amount as USD-ish fallback; user should use SOL/USDC
     }
-    assertUsdCap("swap", usdEstimate);
 
     const summary = [
       "Konfirmasi Swap:",
@@ -803,7 +798,7 @@ async function finishSwapAmount(ctx: Context, amtText: string): Promise<void> {
       `Out  \`${quote.outputMint}\``,
       `UI in: ${fmtNum(amt)} | atomic in: ${quote.inAmount}`,
       `Est out: ${quote.outAmount}`,
-      `Est USD: ${fmtUsd(usdEstimate)} (cap ${fmtUsd(cfg.maxSwapUsd)})`,
+      `Est USD: ${fmtUsd(usdEstimate)}`,
       cfg.dryRun ? "Mode: DRY_RUN" : "Mode: LIVE",
       `Konfirmasi dalam ${CONFIRM_TTL_MS / 1000}s.`,
     ].join("\n");

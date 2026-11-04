@@ -75,7 +75,6 @@ export async function onZapoutPos(ctx: Context, index: number): Promise<void> {
     const summary = [
       `⚡ Zapout **${pair}** → SOL · ≈${val}`,
       `slip ${analysis.swapSlippagePct}% · ${cfg.dryRun ? "🧪 DRY_RUN" : "⚠️ LIVE"} · konfirmasi ${CONFIRM_TTL_MS / 1000}s`,
-      analysis.overSwapCap ? `⚠️ swap ≈$${analysis.estTokenOutUsd.toFixed(2)} > cap $${analysis.maxSwapUsd} (exit tetap diizinkan)` : null,
     ]
       .filter(Boolean)
       .join("\n");

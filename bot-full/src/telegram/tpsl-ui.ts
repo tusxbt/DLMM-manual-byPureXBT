@@ -126,7 +126,7 @@ export const AUTO_WARN = [
   "⚠️ **Auto zapout**",
   "Saat TP atau SL kena, bot akan OTOMATIS menjalankan zapout TANPA Confirm:",
   "withdraw 100% + claim fee + close, lalu swap token → SOL (Jupiter), ditandatangani wallet bot kamu.",
-  "Swap di atas MAX_SWAP_USD dilewati (token tetap di wallet). Gagal → coba 1x lagi, lalu DM tombol manual.",
+  "Semua token di-swap (tanpa batas USD); token tanpa rute Jupiter tetap di wallet. Gagal → coba 1x lagi, lalu DM tombol manual.",
   "Lanjut aktifkan?",
 ].join("\n");
 
