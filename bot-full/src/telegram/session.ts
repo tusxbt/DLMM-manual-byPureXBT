@@ -1,3 +1,5 @@
+import type { AddPanelState } from "./add-panel.js";
+
 export type WizardData = {
   pools?: Array<Record<string, unknown>>;
   pool?: Record<string, unknown>;
@@ -17,6 +19,9 @@ export type WizardData = {
   reshapeAnalysis?: Record<string, unknown>;
   reshapeWidth?: number;
   reshapeStrategyId?: string;
+  panel?: AddPanelState;
+  panelMsgId?: number;
+  settingsMsgId?: number;
 };
 
 export type Session = {

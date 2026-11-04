@@ -24,6 +24,7 @@ import {
   onReshapeWidth,
   executeReshape,
 } from "./reshape-handlers.js";
+import { registerAddPanel, registerSettingsPanel, startAdd, showSettings, showPoolPickerForPanel } from "./panels.js";
 import { startZapout, onZapoutPos, executeZapout } from "./zapout-handlers.js";
 import { detectMintAddress } from "../engine/mint-detect.js";
 import {
@@ -128,12 +129,20 @@ export function createBot(): Bot {
     }
     if (req.status === "expired" || Date.now() > req.expiresAt) {
       markConfirm(id, "expired");
+      if (req.purpose === "add") {
+        await ctx.editMessageText("⏰ Konfirmasi kadaluarsa (60 detik). Panel Add masih ada — tekan 🚀 Deploy lagi.");
+        return;
+      }
       await ctx.editMessageText("⏰ Konfirmasi kadaluarsa (batas 60 detik). Ulangi perintah.");
       await replyMenu(ctx);
       return;
     }
     if (!yes) {
       cancelConfirm(id);
+      if (req.purpose === "add") {
+        await ctx.editMessageText("❌ Dibatalkan. Tidak ada transaksi dikirim. Panel Add di atas masih bisa diedit.");
+        return;
+      }
       await ctx.editMessageText("❌ Dibatalkan. Tidak ada transaksi dikirim.");
       await replyMenu(ctx);
       return;
@@ -162,162 +171,8 @@ export function createBot(): Bot {
     resetSession(chatKey(ctx));
   });
 
-  // ── Add wizard callbacks ─────────────────────────────────────
-  bot.callbackQuery(/^add:pool:(\d+)$/, async (ctx) => {
-    await ctx.answerCallbackQuery();
-    const s = getSession(chatKey(ctx));
-    const pool = s.data.pools?.[Number(ctx.match![1])];
-    if (!pool) return void (await ctx.reply("Sesi kadaluarsa — /add lagi."));
-    s.data.pool = pool;
-    const kb = new InlineKeyboard();
-    for (const st of listStrategies()) {
-      kb.text(st.label, `add:strat:${st.id}`).row();
-    }
-    kb.text("❌ Batal", "menu:cancel");
-    await ctx.editMessageText(
-      `Pool: ${pool.name}\nTVL ${fmtUsd(Number(pool.tvl))} | fee ${fmtNum(Number(pool.fee_pct), 2)}%\nPilih strategi:`,
-      { reply_markup: kb },
-    );
-  });
-
-  bot.callbackQuery(/^add:strat:(.+)$/, async (ctx) => {
-    await ctx.answerCallbackQuery();
-    const s = getSession(chatKey(ctx));
-    s.data.strategyId = ctx.match![1];
-    const kb = new InlineKeyboard()
-      .text("One-sided SOL", "add:side:one_sided_sol")
-      .text("Two-sided", "add:side:two_sided")
-      .row()
-      .text("❌ Batal", "menu:cancel");
-    await ctx.editMessageText(`Strategi: ${strategyLabel(s.data.strategyId)}\nPilih sisi deposit:`, {
-      reply_markup: kb,
-    });
-  });
-
-  bot.callbackQuery(/^add:side:(.+)$/, async (ctx) => {
-    await ctx.answerCallbackQuery();
-    const s = getSession(chatKey(ctx));
-    s.data.side = ctx.match![1] as "one_sided_sol" | "two_sided";
-    const presets = loadSettings().amountPresets;
-    const kb = new InlineKeyboard();
-    for (let i = 0; i < presets.length; i++) {
-      kb.text(`${presets[i]} SOL`, `add:amt:${i}`);
-    }
-    kb.row().text("✏️ Manual", "add:amt:manual").text("❌ Batal", "menu:cancel");
-    await ctx.editMessageText("Pilih amount SOL:", { reply_markup: kb });
-  });
-
-  bot.callbackQuery(/^add:amt:(.+)$/, async (ctx) => {
-    await ctx.answerCallbackQuery();
-    const s = getSession(chatKey(ctx));
-    const arg = ctx.match![1];
-    if (arg === "manual") {
-      s.awaitingText = async (text) => {
-        const n = Number(String(text).replace(",", "."));
-        if (!Number.isFinite(n) || n <= 0) {
-          s.awaitingText = s.awaitingText;
-          await ctx.reply("Angka tidak valid. Ketik amount SOL:");
-          return;
-        }
-        s.data.amountSol = n;
-        if (s.data.side === "two_sided") {
-          s.awaitingText = async (t2) => {
-            const m = Number(String(t2).replace(",", "."));
-            if (!Number.isFinite(m) || m < 0) {
-              await ctx.reply("Ketik amount token (UI):");
-              return;
-            }
-            s.data.amountToken = m;
-            await askRange(ctx);
-          };
-          await ctx.reply("Two-sided: ketik amount token (UI amount, 0 = hanya SOL):");
-          return;
-        }
-        await askRange(ctx);
-      };
-      await ctx.reply("Ketik amount SOL:");
-      return;
-    }
-    const presets = loadSettings().amountPresets;
-    s.data.amountSol = presets[Number(arg)];
-    if (s.data.side === "two_sided") {
-      s.awaitingText = async (t2) => {
-        const m = Number(String(t2).replace(",", "."));
-        s.data.amountToken = Number.isFinite(m) ? m : 0;
-        await askRange(ctx);
-      };
-      await ctx.reply("Two-sided: ketik amount token (UI), atau 0:");
-      return;
-    }
-    await askRange(ctx);
-  });
-
-  bot.callbackQuery(/^add:rng:(.+)$/, async (ctx) => {
-    await ctx.answerCallbackQuery();
-    const s = getSession(chatKey(ctx));
-    const arg = ctx.match![1];
-    const strat = requireStrategy(s.data.strategyId || "spot");
-    if (arg === "bins") {
-      s.awaitingText = async (text) => {
-        const parts = text.trim().split(/\s+/);
-        const below = Number(parts[0]);
-        const above = Number(parts[1] ?? 0);
-        if (!Number.isInteger(below) || !Number.isInteger(above) || below < 0 || above < 0) {
-          await ctx.reply("Format: <bins_below> <bins_above>  contoh: 40 2");
-          s.awaitingText = s.awaitingText;
-          return;
-        }
-        s.data.binsBelow = below;
-        s.data.binsAbove = above;
-        await confirmAdd(ctx);
-      };
-      await ctx.reply("Ketik: <bins_below> <bins_above>  (contoh: 40 2)");
-      return;
-    }
-    if (arg === "price") {
-      s.awaitingText = async (text) => {
-        const parts = text.trim().split(/\s+/).map(Number);
-        if (parts.length < 2 || !parts.every(Number.isFinite)) {
-          await ctx.reply("Format: <min_price> <max_price>");
-          return;
-        }
-        try {
-          const poolAddr = String(s.data.pool?.pool || "");
-          const ab = await getActiveBin(poolAddr);
-          const pools = await searchPools(poolAddr, 1);
-          const binStep = Number(pools[0]?.bin_step || s.data.pool?.bin_step || 100);
-          const minP = parts[0];
-          const maxP = parts[1];
-          const downPct = ab.price > 0 ? ((ab.price - minP) / ab.price) * 100 : 0;
-          const upPct = ab.price > 0 ? ((maxP - ab.price) / ab.price) * 100 : 0;
-          s.data.downPct = Math.max(0, downPct);
-          s.data.upPct = Math.max(0, upPct);
-          s.data.binsBelow = binsFromPct(ab.price, s.data.downPct, binStep, "down");
-          s.data.binsAbove = binsFromPct(ab.price, s.data.upPct, binStep, "up");
-          await confirmAdd(ctx);
-        } catch (e) {
-          await ctx.reply(`Gagal hitung range: ${(e as Error).message}`);
-        }
-      };
-      await ctx.reply("Ketik: <min_price> <max_price> (harga token per SOL-lamport UI pool)");
-      return;
-    }
-    const preset = strat.rangePresets.find((p) => p.id === arg);
-    if (!preset) return void (await ctx.reply("Preset tidak ada."));
-    s.data.rangePresetId = preset.id;
-    s.data.downPct = preset.downPct;
-    s.data.upPct = preset.upPct;
-    try {
-      const poolAddr = String(s.data.pool?.pool || "");
-      const ab = await getActiveBin(poolAddr);
-      const binStep = Number(s.data.pool?.bin_step || 100);
-      s.data.binsBelow = binsFromPct(ab.price, preset.downPct, binStep, "down");
-      s.data.binsAbove = binsFromPct(ab.price, preset.upPct, binStep, "up");
-      await confirmAdd(ctx);
-    } catch (e) {
-      await ctx.reply(`Gagal: ${(e as Error).message}`);
-    }
-  });
+  registerAddPanel(bot);
+  registerSettingsPanel(bot);
 
   // claim / remove index callbacks
   bot.callbackQuery(/^pos:(claim|remove):(\d+)$/, async (ctx) => {
@@ -401,29 +256,6 @@ export function createBot(): Bot {
   bot.callbackQuery(/^zapout:pos:(\d+)$/, async (ctx) => {
     await ctx.answerCallbackQuery();
     await onZapoutPos(ctx, Number(ctx.match![1]));
-  });
-
-  bot.callbackQuery(/^settings:slip:(swap|liq)$/, async (ctx) => {
-    await ctx.answerCallbackQuery();
-    const kind = ctx.match![1] as "swap" | "liq";
-    const s = getSession(chatKey(ctx));
-    s.awaitingText = async (text) => {
-      try {
-        const n = Number(String(text).replace(",", "."));
-        if (kind === "swap") setSwapSlippagePct(n);
-        else setLiqSlippagePct(n);
-        await ctx.reply(
-          `✅ ${kind === "swap" ? "SWAP" : "LIQ"}_SLIPPAGE_PCT = ${kind === "swap" ? getSwapSlippagePct() : getLiqSlippagePct()}% (tersimpan)`,
-          { reply_markup: mainMenuKeyboard() },
-        );
-      } catch (e) {
-        await ctx.reply(`❌ ${(e as Error).message}`, { reply_markup: mainMenuKeyboard() });
-      }
-    };
-    await ctx.reply(
-      `Ketik ${kind === "swap" ? "swap" : "liquidity"} slippage dalam % (0.1–50). Sekarang: ${kind === "swap" ? getSwapSlippagePct() : getLiqSlippagePct()}%`,
-      { reply_markup: CANCEL_KB },
-    );
   });
 
   bot.on("message:text", async (ctx) => {
@@ -561,85 +393,6 @@ async function runConfirmedAction(
   return { success: false, error: `purpose tidak dikenal: ${purpose}` };
 }
 
-async function askRange(ctx: Context): Promise<void> {
-  const s = getSession(chatKey(ctx));
-  const strat = requireStrategy(s.data.strategyId || "spot");
-  const kb = new InlineKeyboard();
-  for (const p of strat.rangePresets) {
-    kb.text(p.label, `add:rng:${p.id}`).row();
-  }
-  kb.text("✏️ Custom bins", "add:rng:bins").row();
-  kb.text("✏️ Custom price", "add:rng:price").row();
-  kb.text("❌ Batal", "menu:cancel");
-  await ctx.reply(
-    `Amount: ${fmtNum(s.data.amountSol)} SOL (${s.data.side})\nPilih range:`,
-    { reply_markup: kb },
-  );
-}
-
-async function confirmAdd(ctx: Context): Promise<void> {
-  const s = getSession(chatKey(ctx));
-  const cfg = loadConfig({ requireTelegram: false, skipWallet: true });
-  try {
-    const solUsd = await getSolUsd();
-    const costUsd = (s.data.amountSol || 0) * solUsd;
-    assertUsdCap("position", costUsd);
-
-    await ctx.reply("⏳ Membangun transaksi…");
-    const strat = requireStrategy(s.data.strategyId || "spot");
-    const built = await buildAddLiquidityTxs({
-      poolAddress: String(s.data.pool?.pool),
-      strategy: strat,
-      side: s.data.side || "one_sided_sol",
-      amountSol: Number(s.data.amountSol || 0),
-      amountTokenUi: s.data.amountToken,
-      range: {
-        binsBelow: Number(s.data.binsBelow || 0),
-        binsAbove: Number(s.data.binsAbove || 0),
-        downPct: s.data.downPct ?? null,
-        upPct: s.data.upPct ?? null,
-        mode: "preset_pct",
-      },
-      poolName: String(s.data.pool?.name || ""),
-    });
-
-    const summary = [
-      "Konfirmasi Add LP:",
-      `Pool: ${s.data.pool?.name}`,
-      `Strategi: ${s.data.strategyId} | sisi: ${s.data.side}`,
-      `Amount: ${fmtNum(s.data.amountSol)} SOL` +
-        (s.data.side === "two_sided" ? ` + token ${fmtNum(s.data.amountToken)}` : ""),
-      `Bins below/above: ${s.data.binsBelow} / ${s.data.binsAbove}`,
-      `Pct ≈ −${fmtNum(s.data.downPct, 1)}% / +${fmtNum(s.data.upPct, 1)}%`,
-      `Perkiraan cost: ${fmtUsd(costUsd)} (cap ${fmtUsd(cfg.maxPositionUsd)})`,
-      `Position baru: ${shortAddr(built.position)}`,
-      cfg.dryRun ? "Mode: DRY_RUN (simulasi)" : "Mode: LIVE — akan ditandatangani & dikirim",
-      `Konfirmasi dalam ${CONFIRM_TTL_MS / 1000}s.`,
-    ].join("\n");
-
-    const req = createConfirm({
-      purpose: "add",
-      summary,
-      payload: {
-        txs: built.txs,
-        meta: built.meta,
-        cost_usd: costUsd,
-      },
-    });
-    resetSession(chatKey(ctx));
-    await ctx.reply(summary, { reply_markup: confirmKeyboard(req.id) });
-  } catch (e) {
-    await ctx.reply(`❌ ${(e as Error).message}`, { reply_markup: mainMenuKeyboard() });
-  }
-}
-
-async function startAdd(ctx: Context): Promise<void> {
-  resetSession(chatKey(ctx));
-  const s = getSession(chatKey(ctx));
-  s.awaitingText = async (text) => doPools(ctx, text.trim(), true);
-  await ctx.reply("🚀 Add LP — paste token mint / pool query:", { reply_markup: CANCEL_KB });
-}
-
 async function doPools(ctx: Context, query: string, forAdd = false): Promise<void> {
   try {
     const pools = await searchPools(query, 8);
@@ -653,16 +406,7 @@ async function doPools(ctx: Context, query: string, forAdd = false): Promise<voi
     const s = getSession(chatKey(ctx));
     s.data.pools = pools as unknown as Array<Record<string, unknown>>;
     if (forAdd) {
-      const kb = new InlineKeyboard();
-      pools.forEach((p, i) => {
-        const label = `${p.name} | step ${p.bin_step} | fee ${fmtNum(p.fee_pct, 2)}% | TVL ${fmtUsd(p.tvl)}`;
-        kb.text(label.slice(0, 64), `add:pool:${i}`).row();
-      });
-      kb.text("❌ Batal", "menu:cancel");
-      await ctx.reply(
-        `Pilih pool DLMM untuk Add (urut TVL, max ${pools.length}):`,
-        { reply_markup: kb },
-      );
+      await showPoolPickerForPanel(ctx, pools as unknown as Array<Record<string, unknown>>);
       return;
     }
     const lines = pools.map(
@@ -738,38 +482,6 @@ async function showBalance(ctx: Context): Promise<void> {
     { reply_markup: mainMenuKeyboard() },
   );
 }
-
-async function showSettings(ctx: Context): Promise<void> {
-  const s = loadSettings();
-  const cfg = loadConfig({ requireTelegram: false, skipWallet: true });
-  const strats = listStrategies()
-    .map((x) => `• ${x.label} (\`${x.id}\`) — ${x.description}`)
-    .join("\n");
-  const kb = new InlineKeyboard()
-    .text(`SWAP slip ${getSwapSlippagePct()}%`, "settings:slip:swap")
-    .text(`LIQ slip ${getLiqSlippagePct()}%`, "settings:slip:liq")
-    .row()
-    .text("⬅️ Menu", "menu:cancel");
-  await ctx.reply(
-    [
-      "⚙️ Settings",
-      `DRY_RUN: ${cfg.dryRun}`,
-      `MAX_POSITION_USD: ${cfg.maxPositionUsd}`,
-      `MAX_SWAP_USD: ${cfg.maxSwapUsd}`,
-      `SWAP_SLIPPAGE_PCT: ${getSwapSlippagePct()}% (Jupiter bps = ×100)`,
-      `LIQ_SLIPPAGE_PCT: ${getLiqSlippagePct()}% (Meteora percentage as-is)`,
-      `Amount presets: ${s.amountPresets.join(", ")} SOL`,
-      "",
-      "Strategi terdaftar:",
-      strats,
-      "",
-      "Tekan tombol slip untuk ubah (0.1–50%, tersimpan di data/settings.json).",
-      "Zapout dikecualikan dari penolakan keras MAX_SWAP_USD (hanya peringatan).",
-    ].join("\n"),
-    { reply_markup: kb },
-  );
-}
-
 
 async function startSwap(ctx: Context): Promise<void> {
   resetSession(chatKey(ctx));

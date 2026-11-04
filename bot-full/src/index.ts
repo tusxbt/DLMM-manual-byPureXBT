@@ -1,6 +1,7 @@
 import { assertEnvFilePermissions, loadConfig } from "./config.js";
 import { installRedactingErrorHandlers, log } from "./logger.js";
 import { createBot } from "./telegram/bot.js";
+import { BOT_COMMANDS } from "./telegram/panels.js";
 
 installRedactingErrorHandlers();
 assertEnvFilePermissions();
@@ -16,6 +17,11 @@ log(
 );
 
 const bot = createBot();
+
+bot.api
+  .setMyCommands(BOT_COMMANDS)
+  .then(() => log("telegram", `setMyCommands OK (${BOT_COMMANDS.length})`))
+  .catch((e) => log("telegram", `setMyCommands gagal: ${(e as Error).message}`, "warn"));
 
 bot.start({
   onStart: (info) => log("telegram", `grammY @${info.username} polling`),
