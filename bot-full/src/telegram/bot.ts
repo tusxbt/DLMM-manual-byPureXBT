@@ -24,7 +24,7 @@ import {
   onReshapeWidth,
   executeReshape,
 } from "./reshape-handlers.js";
-import { registerAddPanel, registerSettingsPanel, startAdd, showSettings, showPoolPickerForPanel } from "./panels.js";
+import { registerAddPanel, registerSettingsPanel, startAdd, showSettings, showPoolPickerForPanel, bottomKeyboard, replyKbAction } from "./panels.js";
 import { startZapout, onZapoutPos, executeZapout } from "./zapout-handlers.js";
 import { detectMintAddress } from "../engine/mint-detect.js";
 import {
@@ -58,8 +58,12 @@ export function createBot(): Bot {
     await next();
   });
 
-  bot.command("start", async (ctx) => replyMenu(ctx));
-  bot.command("menu", async (ctx) => replyMenu(ctx));
+  const withBottomBar = async (ctx: Context) => {
+    await ctx.reply("⌨️ Menu bawah aktif.", { reply_markup: bottomKeyboard() });
+    await replyMenu(ctx);
+  };
+  bot.command("start", withBottomBar);
+  bot.command("menu", withBottomBar);
   bot.command("cancel", async (ctx) => {
     resetSession(chatKey(ctx));
     await ctx.reply("Dibatalkan.");
@@ -260,6 +264,15 @@ export function createBot(): Bot {
 
   bot.on("message:text", async (ctx) => {
     const s = getSession(chatKey(ctx));
+    const kbAction = replyKbAction(ctx.message.text);
+    if (kbAction) {
+      s.awaitingText = null;
+      if (kbAction === "home") return replyMenu(ctx);
+      if (kbAction === "positions") return showPositions(ctx);
+      if (kbAction === "trade") return startSwap(ctx);
+      if (kbAction === "wallet") return showBalance(ctx);
+      return showSettings(ctx);
+    }
     if (s.awaitingText) {
       const fn = s.awaitingText;
       s.awaitingText = null;
@@ -269,6 +282,7 @@ export function createBot(): Bot {
     const t = ctx.message.text.trim();
     const mint = detectMintAddress(t);
     if (mint) {
+      resetSession(chatKey(ctx)); // fresh panel message for each CA paste
       await doPools(ctx, mint, true); // paste CA → list pools → add wizard
       return;
     }

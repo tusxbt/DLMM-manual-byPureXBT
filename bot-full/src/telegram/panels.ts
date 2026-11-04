@@ -1,5 +1,5 @@
-import { InlineKeyboard, type Bot, type Context } from "grammy";
-import { loadConfig, CONFIRM_TTL_MS } from "../config.js";
+import { InlineKeyboard, Keyboard, type Bot, type Context } from "grammy";
+import { loadConfig, CONFIRM_TTL_MS, SOL_MINT } from "../config.js";
 import { fmtNum, fmtUsd, shortAddr } from "../format.js";
 import { redactSecrets } from "../logger.js";
 import { getSession, resetSession } from "./session.js";
@@ -28,15 +28,22 @@ import {
   renderPanelText,
   panelKeyboard,
   panelMissing,
-  strategyPickerKeyboard,
-  modePickerKeyboard,
   rangePickerKeyboard,
-  amountPickerKeyboard,
   rangeLabel,
   modeLabel,
   computeRange,
+  amountFromPct,
+  depositUsd,
+  amountText,
+  hasToken,
+  tokenSymbol,
+  tokenMint,
   MAX_BINS_PER_POSITION,
 } from "./add-panel.js";
+import { PublicKey } from "@solana/web3.js";
+import { getConnection } from "../engine/connection.js";
+import { getWalletPublicKey } from "../engine/wallet.js";
+import { getUsdPrices } from "../engine/prices.js";
 
 const key = (ctx: Context) => String(ctx.chat?.id ?? "");
 
@@ -78,13 +85,19 @@ export async function renderAddPanel(ctx: Context, note?: string): Promise<void>
   const s = getSession(key(ctx));
   const p = panelOf(ctx);
   const cfg = loadConfig({ requireTelegram: false, skipWallet: true });
+  const st = loadSettings();
   const text = renderPanelText(p, {
     liqSlippagePct: getLiqSlippagePct(),
     maxPositionUsd: cfg.maxPositionUsd,
     dryRun: cfg.dryRun,
     note,
   });
-  s.data.panelMsgId = await upsert(ctx, s.data.panelMsgId, text, panelKeyboard(p));
+  s.data.panelMsgId = await upsert(
+    ctx,
+    s.data.panelMsgId,
+    text,
+    panelKeyboard(p, { binPresets: st.binPresets, amountPresets: st.amountPresets }),
+  );
 }
 
 async function showSub(ctx: Context, text: string, kb: InlineKeyboard): Promise<void> {
@@ -92,31 +105,47 @@ async function showSub(ctx: Context, text: string, kb: InlineKeyboard): Promise<
   s.data.panelMsgId = await upsert(ctx, s.data.panelMsgId, text, kb);
 }
 
-const BACK_KB = () => new InlineKeyboard().text("⬅️ Kembali ke panel", "ap:back");
+const BACK_KB = () => new InlineKeyboard().text("⬅️ Panel", "ap:back");
 
-/** /add — open a fresh panel. */
+function askPool(ctx: Context): Promise<void> {
+  const s = getSession(key(ctx));
+  s.awaitingText = async (text) => {
+    await deleteUserMsg(ctx);
+    try {
+      const pools = await searchPools(text.trim(), 8);
+      if (!pools.length) return renderAddPanel(ctx, `Tidak ada pool DLMM untuk “${text.trim()}”.`);
+      await showPoolPickerForPanel(ctx, pools as unknown as Array<Record<string, unknown>>);
+    } catch (e) {
+      await renderAddPanel(ctx, `❌ ${redactSecrets((e as Error).message)}`);
+    }
+  };
+  return showSub(ctx, "🏊 Paste token mint (CA) / alamat pool / query di chat:", new InlineKeyboard().text("🏠 Home", "ap:home"));
+}
+
+/** /add — ask for a pool (CA paste also works anytime). */
 export async function startAdd(ctx: Context): Promise<void> {
   resetSession(key(ctx));
   const s = getSession(key(ctx));
   s.data.panel = defaultPanel(undefined, loadSettings().binPresets);
-  await renderAddPanel(ctx, "Mulai dari ✏️ Pool (atau paste CA token di chat).");
+  await askPool(ctx);
 }
 
-/** Pool list rendered into the panel message (used by CA paste and ✏️ Pool). */
+/** Pool list rendered into the panel message (used by CA paste and ← Pools). */
 export async function showPoolPickerForPanel(ctx: Context, pools: Array<Record<string, unknown>>): Promise<void> {
   const s = getSession(key(ctx));
   s.data.pools = pools;
   if (!s.data.panel) s.data.panel = defaultPanel(undefined, loadSettings().binPresets);
   const kb = new InlineKeyboard();
   pools.forEach((p, i) => {
-    const label = `${p.name} | step ${p.bin_step} | fee ${fmtNum(Number(p.fee_pct), 2)}% | TVL ${fmtUsd(Number(p.tvl))}`;
-    kb.text(label.slice(0, 64), `ap:pool:${i}`).row();
+    const label = `${p.name} · ${fmtNum(Number(p.fee_pct), 2)}% · ${fmtUsd(Number(p.tvl))}`;
+    kb.text(label.slice(0, 40), `ap:pool:${i}`).row();
   });
-  kb.text("⬅️ Kembali ke panel", "ap:back");
-  await showSub(ctx, `🏊 Pilih pool DLMM (urut TVL, ${pools.length} hasil):`, kb);
+  kb.text("🔍 Cari lagi", "ap:search").text("🏠 Home", "ap:home");
+  const lines = pools.map((p, i) => `${i + 1}. ${p.name} · step ${p.bin_step} · fee ${fmtNum(Number(p.fee_pct), 2)}% · TVL ${fmtUsd(Number(p.tvl))}`);
+  await showSub(ctx, [`🏊 Pilih pool DLMM (urut TVL):`, ...lines].join("\n"), kb);
 }
 
-/** Fetch active price + SOL/USD for display; failures are non-fatal. */
+/** Fetch active price, SOL/USD, token price and wallet balances; failures are non-fatal. */
 async function refreshPoolInfo(p: AddPanelState): Promise<void> {
   if (!p.pool?.pool) return;
   try {
@@ -124,10 +153,27 @@ async function refreshPoolInfo(p: AddPanelState): Promise<void> {
   } catch {
     p.activePrice = undefined;
   }
+  const mint = tokenMint(p);
   try {
-    p.solUsd = await getSolUsd();
+    const prices = await getUsdPrices([SOL_MINT, mint]);
+    p.solUsd = prices[SOL_MINT] ?? p.solUsd;
+    p.tokenUsd = mint ? prices[mint] : undefined;
   } catch {
     /* ignore */
+  }
+  try {
+    const conn = getConnection();
+    const owner = getWalletPublicKey();
+    p.solBalance = (await conn.getBalance(owner)) / 1e9;
+    if (mint) {
+      const acc = await conn.getParsedTokenAccountsByOwner(owner, { mint: new PublicKey(mint) });
+      p.tokenBalance = acc.value.reduce(
+        (sum, a) => sum + Number(a.account.data.parsed?.info?.tokenAmount?.uiAmount ?? 0),
+        0,
+      );
+    }
+  } catch {
+    /* keep previous */
   }
 }
 
@@ -137,44 +183,49 @@ async function deployPanel(ctx: Context): Promise<void> {
   if (missing.length) return renderAddPanel(ctx, `Belum lengkap: ${missing.join(", ")}`);
   const cfg = loadConfig({ requireTelegram: false, skipWallet: true });
   try {
-    const solUsd = await getSolUsd();
-    const costUsd = (p.amountSol || 0) * solUsd;
+    await renderAddPanel(ctx, "⏳ Membangun preview…");
+    await refreshPoolInfo(p); // fresh price + balances for exact bin math and cap
+    const costUsd = depositUsd(p);
+    if (costUsd == null) return renderAddPanel(ctx, "⛔ Harga USD token tidak diketahui — cap MAX_POSITION_USD tidak bisa dicek. Pakai SOL side.");
     assertUsdCap("position", costUsd); // MAX_POSITION_USD safeguard (checked again on execute)
-    await renderAddPanel(ctx, "⏳ Membangun transaksi…");
-    await refreshPoolInfo(p); // fresh active price for exact bin math
+    if (p.side !== "one_sided_sol" && (p.amountToken ?? 0) > (p.tokenBalance ?? 0))
+      return renderAddPanel(ctx, `⛔ Saldo ${tokenSymbol(p)} tidak cukup.`);
     const c = computeRange(p, Number(p.pool?.bin_step || 0), p.activePrice);
     if (c.error) return renderAddPanel(ctx, `⛔ ${c.error}`);
     if (c.total > MAX_BINS_PER_POSITION) return renderAddPanel(ctx, `⛔ Maks ${MAX_BINS_PER_POSITION} bins per posisi.`);
-    const bins = { below: c.below, above: c.above, downPct: c.downPct, upPct: c.upPct };
     const strat = requireStrategy(p.strategyId);
+    const sol = p.side === "one_sided_token" ? 0 : Number(p.amountSol || 0);
+    const tok = p.side === "one_sided_sol" ? 0 : Number(p.amountToken || 0);
     const built = await buildAddLiquidityTxs({
       poolAddress: String(p.pool?.pool),
       strategy: strat,
-      side: p.side,
-      amountSol: Number(p.amountSol || 0),
-      amountTokenUi: p.amountToken,
+      // builder: one_sided_sol = SOL only; two_sided = X+Y (token side = token only, bins above)
+      side: p.side === "one_sided_sol" ? "one_sided_sol" : "two_sided",
+      amountSol: sol,
+      amountTokenUi: tok,
       range: {
-        binsBelow: bins.below,
-        binsAbove: bins.above,
-        downPct: bins.downPct,
-        upPct: bins.upPct,
+        binsBelow: c.below,
+        binsAbove: c.above,
+        downPct: c.downPct,
+        upPct: c.upPct,
         mode: p.range.kind === "preset" ? "preset_pct" : p.range.kind === "bins" ? "custom_bins" : "custom_price",
       },
       poolName: String(p.pool?.name || ""),
     });
     const summary = [
-      "Konfirmasi Add LP:",
+      "👀 Preview Add LP",
       `Pool: ${p.pool?.name}`,
-      `Strategi: ${strat.label} | mode: ${modeLabel(p.side)}`,
-      `Amount: ${fmtNum(p.amountSol)} SOL` + (p.side === "two_sided" ? ` + token ${fmtNum(p.amountToken ?? 0)}` : ""),
-      `Range: ${rangeLabel(p.range)}`,
-      `Bins: ${c.total} (${bins.below} bawah / ${bins.above} atas) | −${fmtNum(c.downPct, 2)}% / +${fmtNum(c.upPct, 2)}%`,
+      `Sisi: ${modeLabel(p.side)}`,
+      `Bentuk: ${strat.label}`,
+      `Amount: ${amountText(p)}`,
+      `Range: ${rangeLabel(p.range)} → ${c.total} bins (${c.below} bawah / ${c.above} atas)`,
+      `      −${fmtNum(c.downPct, 2)}% → +${fmtNum(c.upPct, 2)}%`,
       c.minPrice != null && c.maxPrice != null
         ? `Harga: ${fmtNum(c.minPrice, 10)} → ${fmtNum(c.maxPrice, 10)} SOL` +
           (p.solUsd ? ` (${fmtUsd(c.minPrice * p.solUsd)} → ${fmtUsd(c.maxPrice * p.solUsd)})` : "")
         : "",
       c.clamped ? `⚠️ Custom harga dipotong ke ${MAX_BINS_PER_POSITION} bins.` : "",
-      `Slippage LIQ: ${getLiqSlippagePct()}%`,
+      `Slippage: ${getLiqSlippagePct()}%`,
       `Perkiraan cost: ${fmtUsd(costUsd)} (cap ${fmtUsd(cfg.maxPositionUsd)})`,
       `Position baru: ${shortAddr(built.position)}`,
       cfg.dryRun ? "Mode: DRY_RUN (simulasi)" : "Mode: LIVE — akan ditandatangani & dikirim",
@@ -187,7 +238,7 @@ async function deployPanel(ctx: Context): Promise<void> {
       summary,
       payload: { txs: built.txs, meta: built.meta, cost_usd: costUsd },
     });
-    await renderAddPanel(ctx, "Menunggu Confirm di pesan bawah ⬇️ (Cancel = panel tetap bisa diedit).");
+    await renderAddPanel(ctx, "Preview dikirim ⬇️ (Cancel = panel tetap bisa diedit).");
     await ctx.reply(summary, { reply_markup: confirmKeyboard(req.id) });
   } catch (e) {
     await renderAddPanel(ctx, `❌ ${redactSecrets((e as Error).message)}`);
@@ -195,65 +246,82 @@ async function deployPanel(ctx: Context): Promise<void> {
 }
 
 export function registerAddPanel(bot: Bot): void {
+  const track = (ctx: Context) => {
+    const s = getSession(key(ctx));
+    s.data.panelMsgId = ctx.callbackQuery?.message?.message_id ?? s.data.panelMsgId;
+    return s;
+  };
   bot.callbackQuery("ap:back", async (ctx) => {
     await ctx.answerCallbackQuery();
-    getSession(key(ctx)).awaitingText = null;
+    track(ctx).awaitingText = null;
     await renderAddPanel(ctx);
   });
-  bot.callbackQuery("ap:cancel", async (ctx) => {
+  bot.callbackQuery(/^ap:(cancel|home)$/, async (ctx) => {
     await ctx.answerCallbackQuery();
     resetSession(key(ctx));
-    await ctx.editMessageText("❌ Add LP dibatalkan.", { reply_markup: mainMenuKeyboard() });
+    const cfg = loadConfig({ requireTelegram: false, skipWallet: true });
+    await ctx.editMessageText(`🏠 DLMM Bot — ${cfg.dryRun ? "🧪 DRY_RUN" : "⚠️ LIVE"}\nPilih aksi:`, {
+      reply_markup: mainMenuKeyboard(),
+    });
+  });
+  bot.callbackQuery("ap:search", async (ctx) => {
+    await ctx.answerCallbackQuery();
+    track(ctx);
+    await askPool(ctx);
+  });
+  bot.callbackQuery("ap:pools", async (ctx) => {
+    await ctx.answerCallbackQuery();
+    const s = track(ctx);
+    s.awaitingText = null;
+    if (s.data.pools?.length) return showPoolPickerForPanel(ctx, s.data.pools);
+    await askPool(ctx);
   });
   bot.callbackQuery("ap:deploy", async (ctx) => {
     await ctx.answerCallbackQuery();
-    getSession(key(ctx)).awaitingText = null;
+    track(ctx).awaitingText = null;
     await deployPanel(ctx);
   });
 
-  bot.callbackQuery(/^ap:edit:(pool|amount|token|mode|strat|range|slip)$/, async (ctx) => {
+  bot.callbackQuery(/^ap:edit:(amount|range|slip)$/, async (ctx) => {
     await ctx.answerCallbackQuery();
-    const s = getSession(key(ctx));
+    const s = track(ctx);
     const p = panelOf(ctx);
-    s.data.panelMsgId = ctx.callbackQuery.message?.message_id ?? s.data.panelMsgId;
     s.awaitingText = null;
     const field = ctx.match![1];
-    if (field === "pool") {
+    if (field === "amount") {
+      const sym = tokenSymbol(p);
       s.awaitingText = async (text) => {
         await deleteUserMsg(ctx);
-        try {
-          const pools = await searchPools(text.trim(), 8);
-          if (!pools.length) {
-            s.awaitingText = s.awaitingText;
-            return renderAddPanel(ctx, `Tidak ada pool DLMM untuk “${text.trim()}”.`);
-          }
-          await showPoolPickerForPanel(ctx, pools as unknown as Array<Record<string, unknown>>);
-        } catch (e) {
-          await renderAddPanel(ctx, `❌ ${redactSecrets((e as Error).message)}`);
+        if (p.side === "two_sided") {
+          const [a, b] = text.trim().replace(/,/g, ".").split(/\s+/).map(Number);
+          if (!Number.isFinite(a) || a < 0 || !Number.isFinite(b ?? 0) || (b ?? 0) < 0)
+            return renderAddPanel(ctx, "Format Double: <sol> <token>, contoh 0.5 1000");
+          p.amountSol = a;
+          p.amountToken = b ?? 0;
+        } else {
+          const n = parsePositiveNumber(text);
+          if (n == null) return renderAddPanel(ctx, "Nominal tidak valid.");
+          if (p.side === "one_sided_sol") p.amountSol = n;
+          else p.amountToken = n;
         }
+        p.amountPct = null;
+        await renderAddPanel(ctx);
       };
-      return showSub(ctx, "🏊 Kirim token mint (CA) / alamat pool / query di chat:", BACK_KB());
+      const prompt =
+        p.side === "one_sided_sol"
+          ? "💵 Ketik nominal SOL:"
+          : p.side === "one_sided_token"
+            ? `💵 Ketik nominal ${sym}:`
+            : `💵 Ketik: <sol> <${sym}> (contoh 0.5 1000)`;
+      return showSub(ctx, prompt, BACK_KB());
     }
-    if (field === "amount") return showSub(ctx, "💵 Pilih amount SOL:", amountPickerKeyboard(loadSettings().amountPresets));
-    if (field === "token") {
-      s.awaitingText = async (text) => {
-        await deleteUserMsg(ctx);
-        const n = Number(String(text).trim().replace(",", "."));
-        if (!Number.isFinite(n) || n < 0) return renderAddPanel(ctx, "Amount token tidak valid.");
-        p.amountToken = n;
-        await renderAddPanel(ctx, "Amount token diperbarui.");
-      };
-      return showSub(ctx, "🪙 Ketik amount token (UI amount, 0 = hanya SOL):", BACK_KB());
-    }
-    if (field === "mode") return showSub(ctx, "🧭 Pilih mode deposit:", modePickerKeyboard(p.side));
-    if (field === "strat") return showSub(ctx, "📐 Pilih strategi:", strategyPickerKeyboard(p.strategyId));
-    if (field === "range") return showSub(ctx, `📏 Pilih range (${requireStrategy(p.strategyId).label}):`, rangePickerKeyboard(p, loadSettings().binPresets));
+    if (field === "range") return showSub(ctx, "📏 Range — preset bins, custom bins, atau custom harga:", rangePickerKeyboard(p, loadSettings().binPresets));
     if (field === "slip") {
       s.awaitingText = async (text) => {
         await deleteUserMsg(ctx);
         try {
           setLiqSlippagePct(Number(String(text).replace(",", ".")));
-          await renderAddPanel(ctx, `Slippage LIQ = ${getLiqSlippagePct()}% (tersimpan global).`);
+          await renderAddPanel(ctx, `Slippage = ${getLiqSlippagePct()}% (tersimpan global).`);
         } catch (e) {
           await renderAddPanel(ctx, `❌ ${(e as Error).message}`);
         }
@@ -264,40 +332,46 @@ export function registerAddPanel(bot: Bot): void {
 
   bot.callbackQuery(/^ap:pool:(\d+)$/, async (ctx) => {
     await ctx.answerCallbackQuery();
-    const s = getSession(key(ctx));
+    const s = track(ctx);
     const pool = s.data.pools?.[Number(ctx.match![1])];
-    s.data.panelMsgId = ctx.callbackQuery.message?.message_id ?? s.data.panelMsgId;
-    if (!pool) return renderAddPanel(ctx, "Daftar pool kadaluarsa — ✏️ Pool lagi.");
+    if (!pool) return renderAddPanel(ctx, "Daftar pool kadaluarsa — ← Pools lagi.");
     const pp = panelOf(ctx);
     pp.pool = pool;
+    pp.amountToken = undefined;
     await refreshPoolInfo(pp);
-    await renderAddPanel(ctx, panelOf(ctx).amountSol ? undefined : "Pool dipilih. Isi ✏️ Amount lalu 🚀 Deploy.");
+    if (!hasToken(pp) && pp.side !== "one_sided_sol") pp.side = "one_sided_sol";
+    await renderAddPanel(ctx);
   });
 
-  bot.callbackQuery(/^ap:set:(amt|mode|strat|rng):(.+)$/, async (ctx) => {
+  bot.callbackQuery(/^ap:set:(amt|pct|mode|strat|rng):(.+)$/, async (ctx) => {
     await ctx.answerCallbackQuery();
-    const s = getSession(key(ctx));
-    s.data.panelMsgId = ctx.callbackQuery.message?.message_id ?? s.data.panelMsgId;
+    const s = track(ctx);
     const p = panelOf(ctx);
     const kind = ctx.match![1];
     const v = ctx.match![2];
     try {
       if (kind === "amt") {
-        if (v === "manual") {
-          s.awaitingText = async (text) => {
-            await deleteUserMsg(ctx);
-            const n = parsePositiveNumber(text);
-            if (n == null) return renderAddPanel(ctx, "Amount tidak valid.");
-            p.amountSol = n;
-            await renderAddPanel(ctx);
-          };
-          return showSub(ctx, "💵 Ketik amount SOL:", BACK_KB());
-        }
         const a = loadSettings().amountPresets[Number(v)];
-        if (a) p.amountSol = a;
+        if (a) {
+          p.amountSol = a;
+          p.amountPct = null;
+        }
+      } else if (kind === "pct") {
+        const pct = Number(v);
+        const amt = amountFromPct(p, pct);
+        if (p.side !== "one_sided_token" && amt.sol <= 0 && p.side === "one_sided_sol")
+          return renderAddPanel(ctx, "Saldo SOL tidak cukup (sisakan 0.05 SOL untuk fee).");
+        if (p.side !== "one_sided_sol") p.amountToken = amt.token;
+        if (p.side !== "one_sided_token") p.amountSol = amt.sol;
+        p.amountPct = pct;
       } else if (kind === "mode") {
-        p.side = v === "two_sided" ? "two_sided" : "one_sided_sol";
-        if (p.side === "two_sided" && p.amountToken == null) p.amountToken = 0;
+        const side = v as AddPanelState["side"];
+        if (side !== "one_sided_sol" && !hasToken(p))
+          return renderAddPanel(ctx, `💡 Wallet belum memegang ${tokenSymbol(p)} — Token side / Double tidak tersedia.`);
+        p.side = side;
+        p.amountPct = null;
+        if (side === "one_sided_token") p.amountSol = undefined;
+        if (side === "one_sided_sol") p.amountToken = undefined;
       } else if (kind === "strat") {
         s.data.panel = setStrategy(p, v);
       } else if (kind === "rng") {
@@ -330,6 +404,35 @@ export function registerAddPanel(bot: Bot): void {
       await renderAddPanel(ctx, `❌ ${(e as Error).message}`);
     }
   });
+}
+
+// ── Persistent reply keyboard (bottom bar) ──────────────────────
+
+export const REPLY_KB_LABELS = {
+  home: "🏠 Home",
+  positions: "📊 Positions",
+  trade: "💱 Trade",
+  wallet: "👛 Wallet",
+  settings: "⚙️ Settings",
+} as const;
+
+export function bottomKeyboard(): Keyboard {
+  return new Keyboard()
+    .text(REPLY_KB_LABELS.home)
+    .text(REPLY_KB_LABELS.positions)
+    .row()
+    .text(REPLY_KB_LABELS.trade)
+    .text(REPLY_KB_LABELS.wallet)
+    .text(REPLY_KB_LABELS.settings)
+    .resized()
+    .persistent();
+}
+
+/** Map a bottom-bar label to an action id, or null. */
+export function replyKbAction(text: string): keyof typeof REPLY_KB_LABELS | null {
+  const t = text.trim();
+  for (const [k, v] of Object.entries(REPLY_KB_LABELS)) if (t === v) return k as keyof typeof REPLY_KB_LABELS;
+  return null;
 }
 
 // ── Settings panel ──────────────────────────────────────────────

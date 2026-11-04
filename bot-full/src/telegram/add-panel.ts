@@ -18,6 +18,11 @@ export type PanelRange =
   | { kind: "bins"; below: number; above: number }
   | { kind: "price"; min: number; max: number };
 
+export type PanelSide = "one_sided_sol" | "one_sided_token" | "two_sided";
+
+/** SOL kept aside for rent + fees when using Max. */
+export const SOL_RESERVE = 0.05;
+
 export type AddPanelState = {
   pool?: Record<string, unknown>;
   /** Cached active price (quote per token) + SOL/USD at pool selection, for display only. */
@@ -25,7 +30,13 @@ export type AddPanelState = {
   solUsd?: number;
   amountSol?: number;
   amountToken?: number;
-  side: "one_sided_sol" | "two_sided";
+  side: PanelSide;
+  /** Wallet balances cached at pool selection (display + % buttons). */
+  solBalance?: number;
+  tokenBalance?: number;
+  tokenUsd?: number;
+  /** Amount chosen as % of balance (for display), null = manual/preset. */
+  amountPct?: number | null;
   strategyId: string;
   range: PanelRange;
 };
@@ -74,6 +85,7 @@ export type ComputedRange = {
 /** Split N bins: one-sided SOL → all below active; two-sided → half/half. */
 export function splitBins(total: number, side: AddPanelState["side"]): { below: number; above: number } {
   if (side === "one_sided_sol") return { below: total, above: 0 };
+  if (side === "one_sided_token") return { below: 0, above: total };
   const above = Math.floor(total / 2);
   return { below: total - above, above };
 }
@@ -163,15 +175,62 @@ export function rangeDetailLines(c: ComputedRange, solUsd?: number | null): stri
   return lines;
 }
 
-export function modeLabel(side: AddPanelState["side"]): string {
-  return side === "one_sided_sol" ? "One-sided SOL" : "Two-sided";
+export function modeLabel(side: PanelSide): string {
+  if (side === "one_sided_sol") return "SOL side · di bawah harga (order beli)";
+  if (side === "one_sided_token") return "Token side · di atas harga (order jual)";
+  return "Double · dua sisi";
+}
+
+export function tokenSymbol(p: AddPanelState): string {
+  const t = (p.pool?.token_x || {}) as { symbol?: string };
+  return t.symbol || String(p.pool?.name || "TOKEN").split("-")[0] || "TOKEN";
+}
+
+export function tokenMint(p: AddPanelState): string {
+  return String(((p.pool?.token_x || {}) as { mint?: string }).mint || "");
+}
+
+export function hasToken(p: AddPanelState): boolean {
+  return (p.tokenBalance ?? 0) > 0;
+}
+
+/** Amount (UI) available for a %-of-balance button. pct=100 = Max (SOL keeps reserve). */
+export function amountFromPct(p: AddPanelState, pct: number): { sol: number; token: number } {
+  const f = Math.min(100, Math.max(0, pct)) / 100;
+  const solAvail = Math.max(0, (p.solBalance ?? 0) - SOL_RESERVE);
+  const tokAvail = p.tokenBalance ?? 0;
+  const round = (x: number) => Math.floor(x * 1e6) / 1e6;
+  if (p.side === "one_sided_sol") return { sol: round(solAvail * f), token: 0 };
+  if (p.side === "one_sided_token") return { sol: 0, token: round(tokAvail * f) };
+  return { sol: round(solAvail * f), token: round(tokAvail * f) };
+}
+
+/** Estimated USD cost of the deposit; null when a token price is needed but unknown. */
+export function depositUsd(p: AddPanelState): number | null {
+  const sol = p.side === "one_sided_token" ? 0 : p.amountSol ?? 0;
+  const tok = p.side === "one_sided_sol" ? 0 : p.amountToken ?? 0;
+  if (tok > 0 && !(p.tokenUsd && p.tokenUsd > 0)) return null;
+  return sol * (p.solUsd ?? 0) + tok * (p.tokenUsd ?? 0);
+}
+
+export function amountText(p: AddPanelState): string {
+  const sym = tokenSymbol(p);
+  const pct = p.amountPct ? ` (${p.amountPct === 100 ? "Max" : `${p.amountPct}%`} saldo)` : "";
+  if (p.side === "one_sided_sol") return p.amountSol ? `${fmtNum(p.amountSol)} SOL${pct}` : "— belum diisi";
+  if (p.side === "one_sided_token") return p.amountToken ? `${fmtNum(p.amountToken)} ${sym}${pct}` : "— belum diisi";
+  if (!p.amountSol && !p.amountToken) return "— belum diisi";
+  return `${fmtNum(p.amountSol ?? 0)} SOL + ${fmtNum(p.amountToken ?? 0)} ${sym}${pct}`;
 }
 
 /** Returns list of missing items; empty = ready to deploy. */
 export function panelMissing(p: AddPanelState): string[] {
   const m: string[] = [];
   if (!p.pool?.pool) m.push("Pool");
-  if (!p.amountSol || p.amountSol <= 0) m.push("Amount");
+  const sol = p.amountSol ?? 0;
+  const tok = p.amountToken ?? 0;
+  const okAmt =
+    p.side === "one_sided_sol" ? sol > 0 : p.side === "one_sided_token" ? tok > 0 : sol > 0 || tok > 0;
+  if (!okAmt) m.push("Amount");
   if (p.pool?.pool) {
     const c = computeRange(p, Number(p.pool.bin_step || 0), p.activePrice);
     if (c.error) m.push("Range");
@@ -185,80 +244,90 @@ export function renderPanelText(
 ): string {
   const pool = p.pool;
   const strat = getStrategy(p.strategyId);
+  const sym = pool ? tokenSymbol(p) : "token";
   const missing = panelMissing(p);
+  const deposit = p.side === "one_sided_sol" ? "SOL" : p.side === "one_sided_token" ? sym : `SOL + ${sym}`;
+  const bal =
+    p.side === "one_sided_sol"
+      ? `${fmtNum(p.solBalance ?? 0)} SOL`
+      : p.side === "one_sided_token"
+        ? `${fmtNum(p.tokenBalance ?? 0)} ${sym}`
+        : `${fmtNum(p.solBalance ?? 0)} SOL · ${fmtNum(p.tokenBalance ?? 0)} ${sym}`;
+  let rangeLine = `Range: ${rangeLabel(p.range)}`;
+  const extra: string[] = [];
+  if (pool) {
+    const c = computeRange(p, Number(pool.bin_step || 0), p.activePrice);
+    rangeLine = `Range: ${c.total} bins (−${fmtNum(c.downPct, 1)}% → +${fmtNum(c.upPct, 1)}%)`;
+    if (c.minPrice != null && c.maxPrice != null) {
+      const u = (x: number) => (p.solUsd ? ` ($${fmtNum(x * p.solUsd, 6)})` : "");
+      extra.push(`Harga: ${fmtNum(c.minPrice, 8)}${u(c.minPrice)} → ${fmtNum(c.maxPrice, 8)}${u(c.maxPrice)} SOL`);
+    }
+    if (c.clamped) extra.push(`⚠️ Custom harga dipotong ke ${MAX_BINS_PER_POSITION} bins.`);
+    if (c.error) extra.push(`⛔ ${c.error}`);
+  }
+  const usd = depositUsd(p);
   return [
-    "🚀 Add LP — panel",
+    pool ? `🎯 Setup ${sym} · ${pool.name}` : "🎯 Setup — pilih pool dulu",
+    pool
+      ? `${sym} · fee ${fmtNum(Number(pool.fee_pct), 2)}% · step ${pool.bin_step} · TVL ${fmtUsd(Number(pool.tvl))}`
+      : null,
+    `Deposit: ${deposit}`,
+    `Balance: ${bal}`,
     "",
-    `🏊 Pool: ${pool ? `${pool.name} (${shortAddr(String(pool.pool))})` : "— belum dipilih"}`,
-    pool ? `     step ${pool.bin_step} | fee ${fmtNum(Number(pool.fee_pct), 2)}% | TVL ${fmtUsd(Number(pool.tvl))}` : null,
-    `💵 Amount: ${p.amountSol ? `${fmtNum(p.amountSol)} SOL` : "— belum diisi"}` +
-      (p.side === "two_sided" ? ` + token ${fmtNum(p.amountToken ?? 0)}` : ""),
-    `🧭 Mode: ${modeLabel(p.side)}`,
-    `📐 Strategi: ${strat?.label ?? p.strategyId}`,
-    `📏 Range: ${rangeLabel(p.range)}`,
-    ...(pool ? rangeDetailLines(computeRange(p, Number(pool.bin_step || 0), p.activePrice), p.solUsd) : []),
-    `🎚 Slippage LIQ: ${opts.liqSlippagePct}%`,
+    `Sisi: ${modeLabel(p.side)}`,
+    `Bentuk: ${strat?.label ?? p.strategyId}`,
+    rangeLine,
+    ...extra,
+    `Amount: ${amountText(p)}` + (usd ? ` ≈ ${fmtUsd(usd)}` : ""),
+    `Slippage: ${opts.liqSlippagePct}% · cap ${fmtUsd(opts.maxPositionUsd)} · ${opts.dryRun ? "🧪 DRY_RUN" : "⚠️ LIVE"}`,
     "",
-    `Cap posisi ${fmtUsd(opts.maxPositionUsd)} | ${opts.dryRun ? "🧪 DRY_RUN" : "⚠️ LIVE"}`,
-    missing.length ? `⚠️ Lengkapi: ${missing.join(", ")}` : "✅ Siap deploy — tekan 🚀 Deploy (lanjut ke Confirm 60s).",
-    opts.note ? `\nℹ️ ${opts.note}` : null,
+    missing.length
+      ? `Pilih range & amount → 👀 Preview. (kurang: ${missing.join(", ")})`
+      : "✅ Siap — tekan 👀 Preview untuk konfirmasi.",
+    pool && !hasToken(p) ? `💡 Token side / Double tidak tersedia — wallet belum memegang ${sym}.` : null,
+    opts.note ? `ℹ️ ${opts.note}` : null,
+    pool ? `\nℹ️ Pool ${shortAddr(String(pool.pool), 6)}` : null,
   ]
     .filter((x) => x !== null)
     .join("\n");
 }
 
-export function panelKeyboard(p: AddPanelState): InlineKeyboard {
-  const kb = new InlineKeyboard()
-    .text("✏️ Pool", "ap:edit:pool")
-    .text("✏️ Amount", "ap:edit:amount")
-    .row()
-    .text("✏️ Mode", "ap:edit:mode")
-    .text("✏️ Strategi", "ap:edit:strat")
-    .row()
-    .text("✏️ Range", "ap:edit:range")
-    .text("✏️ Slippage", "ap:edit:slip")
-    .row();
-  if (p.side === "two_sided") kb.text("✏️ Amount token", "ap:edit:token").row();
-  kb.text(panelMissing(p).length ? "🚀 Deploy (belum lengkap)" : "🚀 Deploy", "ap:deploy").text("❌ Batal", "ap:cancel");
-  return kb;
-}
+const tick = (on: boolean, label: string) => (on ? `✓ ${label}` : label);
 
-export function strategyPickerKeyboard(current: string): InlineKeyboard {
+export function panelKeyboard(
+  p: AddPanelState,
+  opts: { binPresets?: BinPresets; amountPresets?: number[] } = {},
+): InlineKeyboard {
+  const presets = opts.binPresets ?? DEFAULT_BIN_PRESETS;
   const kb = new InlineKeyboard();
-  for (const s of listStrategies()) kb.text(`${s.id === current ? "✅ " : ""}${s.label}`, `ap:set:strat:${s.id}`).row();
-  return kb.text("⬅️ Kembali", "ap:back");
-}
-
-export function modePickerKeyboard(current: AddPanelState["side"]): InlineKeyboard {
-  return new InlineKeyboard()
-    .text(`${current === "one_sided_sol" ? "✅ " : ""}One-sided SOL`, "ap:set:mode:one_sided_sol")
-    .text(`${current === "two_sided" ? "✅ " : ""}Two-sided`, "ap:set:mode:two_sided")
-    .row()
-    .text("⬅️ Kembali", "ap:back");
+  for (const st of listStrategies()) kb.text(tick(st.id === p.strategyId, st.label), `ap:set:strat:${st.id}`);
+  kb.row();
+  kb.text(tick(p.side === "one_sided_sol", "SOL"), "ap:set:mode:one_sided_sol");
+  kb.text(tick(p.side === "one_sided_token", "Token"), "ap:set:mode:one_sided_token");
+  kb.text(tick(p.side === "two_sided", "Double"), "ap:set:mode:two_sided");
+  kb.row();
+  const cur = p.range.kind === "preset" ? p.range.presetId : "";
+  for (const id of PRESET_IDS) kb.text(tick(id === cur, `${clampBins(presets[id])}b`), `ap:set:rng:${id}`);
+  kb.row();
+  if (p.side === "one_sided_sol") {
+    (opts.amountPresets ?? []).slice(0, 3).forEach((a, i) => kb.text(tick(p.amountSol === a && !p.amountPct, `${a}`), `ap:set:amt:${i}`));
+  }
+  for (const pct of [25, 50, 100]) kb.text(tick(p.amountPct === pct, pct === 100 ? "Max" : `${pct}%`), `ap:set:pct:${pct}`);
+  kb.row();
+  kb.text("✏️ Range", "ap:edit:range").text("✏️ Nominal", "ap:edit:amount").text("👀 Preview", "ap:deploy").row();
+  kb.text("← Pools", "ap:pools").text("🏠 Home", "ap:home");
+  return kb;
 }
 
 export function rangePickerKeyboard(p: AddPanelState, presets: BinPresets = DEFAULT_BIN_PRESETS): InlineKeyboard {
   const kb = new InlineKeyboard();
   const cur = p.range.kind === "preset" ? p.range.presetId : "";
-  const step = Number(p.pool?.bin_step || 0);
-  for (const id of PRESET_IDS) {
-    const bins = clampBins(presets[id]);
-    let extra = "";
-    if (step > 0) {
-      const c = computeRange({ ...p, range: { kind: "preset", presetId: id, bins } }, step, p.activePrice);
-      extra = ` ≈ −${fmtNum(c.downPct, 1)}%` + (c.above ? `/+${fmtNum(c.upPct, 1)}%` : "");
-    }
-    kb.text(`${id === cur ? "✅ " : ""}${id[0].toUpperCase()}${id.slice(1)} ${bins} bins${extra}`, `ap:set:rng:${id}`).row();
-  }
+  for (const id of PRESET_IDS) kb.text(tick(id === cur, `${clampBins(presets[id])}b`), `ap:set:rng:${id}`);
   return kb
-    .text("✏️ Custom bins", "ap:set:rng:_bins")
-    .text("✏️ Custom harga", "ap:set:rng:_price")
     .row()
-    .text("⬅️ Kembali", "ap:back");
-}
-
-export function amountPickerKeyboard(presets: number[]): InlineKeyboard {
-  const kb = new InlineKeyboard();
-  presets.forEach((a, i) => kb.text(`${a} SOL`, `ap:set:amt:${i}`));
-  return kb.row().text("✏️ Ketik manual", "ap:set:amt:manual").text("⬅️ Kembali", "ap:back");
+    .text("✏️ Bins", "ap:set:rng:_bins")
+    .text("✏️ Harga", "ap:set:rng:_price")
+    .row()
+    .text("✏️ Slippage", "ap:edit:slip")
+    .text("⬅️ Panel", "ap:back");
 }

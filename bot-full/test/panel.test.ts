@@ -12,7 +12,8 @@ import {
   panelKeyboard,
 } from "../src/telegram/add-panel.js";
 import { computeRange, splitBins, MAX_BINS_PER_POSITION } from "../src/telegram/add-panel.js";
-import { BOT_COMMANDS, parseBinPresets } from "../src/telegram/panels.js";
+import { BOT_COMMANDS, parseBinPresets, bottomKeyboard, replyKbAction } from "../src/telegram/panels.js";
+import { amountFromPct, depositUsd } from "../src/telegram/add-panel.js";
 import { coerceBinPresets } from "../src/store/settings.js";
 
 const pool = (step: number) => ({ pool: "X", name: "A-SOL", bin_step: step });
@@ -91,16 +92,49 @@ test("parsers", () => {
   assert.equal(parsePositiveNumber("-1"), null);
 });
 
-test("render + keyboard", () => {
+test("render + keyboard (reference layout)", () => {
   const p = defaultPanel();
   const t = renderPanelText(p, { liqSlippagePct: 10, maxPositionUsd: 100, dryRun: true });
-  assert.match(t, /Lengkapi: Pool, Amount/);
+  assert.match(t, /kurang: Pool, Amount/);
   assert.match(t, /DRY_RUN/);
-  const kb = JSON.stringify(panelKeyboard(p).inline_keyboard);
-  for (const cb of ["ap:edit:pool", "ap:edit:amount", "ap:edit:strat", "ap:edit:range", "ap:edit:slip", "ap:deploy", "ap:cancel"])
-    assert.ok(kb.includes(cb), cb);
-  assert.ok(!kb.includes("ap:edit:token"));
-  assert.ok(JSON.stringify(panelKeyboard({ ...p, side: "two_sided" }).inline_keyboard).includes("ap:edit:token"));
+  const kb = panelKeyboard(p, { amountPresets: [0.5, 1, 2] }).inline_keyboard;
+  const flat = JSON.stringify(kb);
+  for (const cb of ["ap:set:strat:spot", "ap:set:mode:one_sided_token", "ap:set:rng:wide", "ap:set:pct:100", "ap:edit:range", "ap:edit:amount", "ap:deploy", "ap:pools", "ap:home"])
+    assert.ok(flat.includes(cb), cb);
+  // short labels so Telegram doesn't truncate
+  for (const row of kb) for (const b of row) assert.ok(b.text.length <= 12, b.text);
+  assert.ok(flat.includes('40b') && flat.includes('"69b'));
+  // token side hides SOL presets
+  assert.ok(!JSON.stringify(panelKeyboard({ ...p, side: "one_sided_token" }, { amountPresets: [0.5] }).inline_keyboard).includes("ap:set:amt:"));
+});
+
+test("panel text: token hint, range %, USD", () => {
+  const p = { ...defaultPanel({ pool: "PoolAddr111111", name: "BONK-SOL", bin_step: 100, fee_pct: 1, tvl: 5000, token_x: { symbol: "BONK", mint: "M" } }), activePrice: 1, solUsd: 150, solBalance: 2, tokenBalance: 0, amountSol: 0.5 };
+  const t = renderPanelText(p, { liqSlippagePct: 10, maxPositionUsd: 100, dryRun: false });
+  assert.match(t, /🎯 Setup BONK · BONK-SOL/);
+  assert.match(t, /Range: 40 bins \(−32\.8% → \+0% ?\)|Range: 40 bins \(−32\.8/);
+  assert.match(t, /Token side \/ Double tidak tersedia/);
+  assert.match(t, /≈ \$75/);
+});
+
+test("amountFromPct keeps SOL reserve; depositUsd needs token price", () => {
+  const p = { ...defaultPanel(), solBalance: 1.05, tokenBalance: 1000 };
+  assert.equal(amountFromPct(p, 100).sol, 1);
+  assert.equal(amountFromPct(p, 50).sol, 0.5);
+  assert.equal(amountFromPct({ ...p, side: "one_sided_token" }, 25).token, 250);
+  assert.equal(depositUsd({ ...p, side: "one_sided_token", amountToken: 10 }), null);
+  assert.equal(depositUsd({ ...p, side: "one_sided_token", amountToken: 10, tokenUsd: 2 }), 20);
+  assert.equal(depositUsd({ ...p, side: "two_sided", amountSol: 1, amountToken: 10, tokenUsd: 2, solUsd: 100 }), 120);
+  assert.deepEqual(splitBins(30, "one_sided_token"), { below: 0, above: 30 });
+});
+
+test("bottom reply keyboard maps labels", () => {
+  assert.equal(replyKbAction("👛 Wallet"), "wallet");
+  assert.equal(replyKbAction("💱 Trade"), "trade");
+  assert.equal(replyKbAction("random"), null);
+  const kb = bottomKeyboard();
+  assert.equal(kb.is_persistent, true);
+  assert.equal(kb.resize_keyboard, true);
 });
 
 test("command menu valid for Telegram", () => {
