@@ -118,8 +118,9 @@ export async function buildAddLiquidityTxs(input: {
 
   const item = serializeTx(tx);
   item.label = "initializePositionAndAddLiquidity";
+  item.coSigners = [positionKp]; // memory-only: lets executor re-sign after fresh blockhash
 
-  // positionKp secret discarded after partialSign (not persisted)
+  // positionKp secret kept in memory only (confirm store, ≤60s) for re-sign; never persisted
   return {
     txs: [item],
     position: positionKp.publicKey.toBase58(),

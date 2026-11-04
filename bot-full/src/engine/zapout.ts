@@ -361,7 +361,7 @@ export function formatZapoutPreview(a: ZapoutAnalysis): string {
   const lines = [
     `Zapout ${a.poolName || a.pool.slice(0, 8)}`,
     `Pos: ${a.position.slice(0, 4)}…${a.position.slice(-4)}`,
-    `Nilai pos ≈ $${a.totalValueUsd.toFixed(2)} | fees ≈ $${a.unclaimedFeesUsd.toFixed(2)}`,
+    `Nilai pos ≈ ${Number.isFinite(a.totalValueUsd) ? `$${a.totalValueUsd.toFixed(2)}` : "n/a"} | fees ≈ ${Number.isFinite(a.unclaimedFeesUsd) ? `$${a.unclaimedFeesUsd.toFixed(2)}` : "n/a"}`,
     `Token: ${a.tokenMint.slice(0, 4)}…${a.tokenMint.slice(-4)}`,
     `Est. token keluar (liq+fee): ${a.estTokenOutUi} ≈ $${a.estTokenOutUsd.toFixed(2)}`,
     `Fee: token ${a.feeTokenUi} | SOL ${a.feeSolUi} (SOL fee tetap di wallet)`,

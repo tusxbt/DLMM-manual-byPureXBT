@@ -69,8 +69,9 @@ export type LivePosition = {
   position: string;
   pool: string;
   pair?: string;
-  total_value_usd: number;
-  unclaimed_fees_usd: number;
+  /** null when a needed token price is unknown (shown as n/a, never $0) */
+  total_value_usd: number | null;
+  unclaimed_fees_usd: number | null;
   /** null when deposit cost is unknown (never invented) */
   pnl_usd: number | null;
   pnl_pct: number | null;
@@ -187,10 +188,11 @@ export async function listLivePositions(costByPosition: Record<string, number> =
   return raws.map((r) => {
     const px = prices[r.mintX] ?? 0;
     const py = prices[r.mintY] ?? 0;
+    const priced = (r.totalX + r.feeX === 0 || px > 0) && (r.totalY + r.feeY === 0 || py > 0);
     const value = r.totalX * px + r.totalY * py;
     const fees = r.feeX * px + r.feeY * py;
     const cost = costByPosition[r.position];
-    const known = cost != null && cost > 0 && (px > 0 || r.totalX === 0) && (py > 0 || r.totalY === 0);
+    const known = priced && cost != null && cost > 0 && (px > 0 || r.totalX === 0) && (py > 0 || r.totalY === 0);
     const pnl = known ? value + fees - cost : null;
     const pnlPct = known && pnl != null ? (pnl / cost) * 100 : null;
     const binPrice = (id?: number) =>
@@ -198,8 +200,8 @@ export async function listLivePositions(costByPosition: Record<string, number> =
     return {
       position: r.position,
       pool: r.pool,
-      total_value_usd: Math.round(value * 100) / 100,
-      unclaimed_fees_usd: Math.round(fees * 100) / 100,
+      total_value_usd: priced ? Math.round(value * 100) / 100 : null,
+      unclaimed_fees_usd: priced ? Math.round(fees * 100) / 100 : null,
       pnl_usd: pnl == null ? null : Math.round(pnl * 100) / 100,
       pnl_pct: pnlPct == null ? null : Math.round(pnlPct * 100) / 100,
       in_range: r.inRange,

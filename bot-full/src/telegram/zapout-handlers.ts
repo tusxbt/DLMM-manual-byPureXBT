@@ -66,8 +66,8 @@ export async function onZapoutPos(ctx: Context, index: number): Promise<void> {
       poolAddress: String(p.pool),
       positionAddress: String(p.position),
       poolName: String(p.pool_name || ""),
-      totalValueUsd: Number(p.total_value_usd || 0),
-      unclaimedFeesUsd: Number(p.unclaimed_fees_usd || 0),
+      totalValueUsd: p.total_value_usd == null ? NaN : Number(p.total_value_usd),
+      unclaimedFeesUsd: p.unclaimed_fees_usd == null ? NaN : Number(p.unclaimed_fees_usd),
     });
     const summary = [
       formatZapoutPreview(analysis),

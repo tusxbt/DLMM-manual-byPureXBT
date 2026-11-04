@@ -10,8 +10,11 @@ import { log } from "../logger.js";
 import { jupiterSlippageBps } from "./slippage.js";
 import { jupiterPrioritization } from "./priority.js";
 
-const QUOTE_API = "https://quote-api.jup.ag/v6/quote";
-const SWAP_API = "https://quote-api.jup.ag/v6/swap";
+/** quote-api.jup.ag/v6 is gone (DNS fail). Swap API v1: api.jup.ag (with key) or lite-api.jup.ag. */
+function swapBase(): string {
+  const cfg = loadConfig({ requireTelegram: false, skipWallet: true });
+  return cfg.jupiterApiKey ? "https://api.jup.ag/swap/v1" : "https://lite-api.jup.ag/swap/v1";
+}
 
 export function normalizeMint(mint: string): string {
   if (!mint) return mint;
@@ -38,7 +41,7 @@ export async function getSwapQuote(input: {
   const outputMint = normalizeMint(input.outputMint);
   const slippageBps = input.slippageBps ?? jupiterSlippageBps();
   const url =
-    `${QUOTE_API}?inputMint=${inputMint}&outputMint=${outputMint}` +
+    `${swapBase()}/quote?inputMint=${inputMint}&outputMint=${outputMint}` +
     `&amount=${input.amountAtomic}&slippageBps=${slippageBps}`;
   const headers: Record<string, string> = { accept: "application/json" };
   const cfg = loadConfig({ requireTelegram: false, skipWallet: true });
@@ -76,7 +79,7 @@ export async function buildSwapTx(input: {
     dynamicComputeUnitLimit: true,
     ...(jupiterPrioritization() ? { prioritizationFeeLamports: jupiterPrioritization() } : {}),
   };
-  const res = await fetch(SWAP_API, { method: "POST", headers, body: JSON.stringify(body) });
+  const res = await fetch(`${swapBase()}/swap`, { method: "POST", headers, body: JSON.stringify(body) });
   if (!res.ok) throw new Error(`Jupiter swap HTTP ${res.status}: ${(await res.text()).slice(0, 200)}`);
   const data = await res.json();
   const swapTransaction = data.swapTransaction as string | undefined;

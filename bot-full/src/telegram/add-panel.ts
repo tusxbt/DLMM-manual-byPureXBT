@@ -210,6 +210,7 @@ export function depositUsd(p: AddPanelState): number | null {
   const sol = p.side === "one_sided_token" ? 0 : p.amountSol ?? 0;
   const tok = p.side === "one_sided_sol" ? 0 : p.amountToken ?? 0;
   if (tok > 0 && !(p.tokenUsd && p.tokenUsd > 0)) return null;
+  if (sol > 0 && !(p.solUsd && p.solUsd > 0)) return null; // never let unknown price pass the cap as $0
   return sol * (p.solUsd ?? 0) + tok * (p.tokenUsd ?? 0);
 }
 

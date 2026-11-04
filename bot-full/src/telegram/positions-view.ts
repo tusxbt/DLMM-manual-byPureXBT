@@ -16,6 +16,7 @@ import { onReshapePos } from "./reshape-handlers.js";
 import { onZapoutPos } from "./zapout-handlers.js";
 
 const key = (ctx: Context) => String(ctx.chat?.id ?? "");
+export const usdOrNa = (n: number | null | undefined) => (n == null || !Number.isFinite(n) ? "n/a (harga tidak tersedia)" : fmtUsd(n));
 const SUB = "₀₁₂₃₄₅₆₇₈₉";
 
 /** 0.00000116 → "0.0₅116"; normal numbers keep ~4 significant digits. */
@@ -69,9 +70,9 @@ export function renderPositionCard(p: PositionCard, now = new Date()): string {
   const lines = [
     `${pair} ${shortAddr(p.position)} [DLMM]`,
     "",
-    `📊 Value: ${fmtUsd(p.total_value_usd)}`,
+    `📊 Value: ${usdOrNa(p.total_value_usd)}`,
     pnl,
-    `💵 Fee berjalan: ${fmtUsd(p.unclaimed_fees_usd)}`,
+    `💵 Fee berjalan: ${usdOrNa(p.unclaimed_fees_usd)}`,
     "",
   ];
   if (p.min_price != null && p.max_price != null) {
@@ -143,20 +144,21 @@ export function positionButtonLabel(p: PositionCard): string {
   const dot = p.in_range == null ? "⚪" : p.in_range ? "🟢" : "🔴";
   const pnl = p.pnl_pct == null ? "" : ` ${p.pnl_pct >= 0 ? "+" : "−"}${Math.abs(p.pnl_pct).toFixed(p.pnl_pct !== 0 && Math.abs(p.pnl_pct) < 10 ? 1 : 0)}%`;
   const pair = (p.pair || "TOKEN/SOL").slice(0, 16);
-  return `${dot} ${pair} $${Math.round(p.total_value_usd)}${pnl}`;
+  return `${dot} ${pair} ${p.total_value_usd == null ? "n/a" : `$${Math.round(p.total_value_usd)}`}${pnl}`;
 }
 
 export function renderPositionList(cards: PositionCard[], page: number, autoBadge = false): { text: string; kb: InlineKeyboard; page: number } {
   const pages = Math.max(1, Math.ceil(cards.length / PAGE_SIZE));
   const pg = Math.min(pages - 1, Math.max(0, page));
   const total = cards.reduce((a, c) => a + (c.total_value_usd || 0), 0);
+  const unpriced = cards.filter((c) => c.total_value_usd == null).length;
   const fees = cards.reduce((a, c) => a + (c.unclaimed_fees_usd || 0), 0);
   const inR = cards.filter((c) => c.in_range).length;
   const text = [
     `📊 ${cards.length} posisi DLMM`,
     autoBadge ? `${AUTO_BADGE} — 🚪 Exit & ⚡ → SOL tanpa Confirm` : null,
     "",
-    `💼 Total value: ${fmtUsd(total)}`,
+    `💼 Total value: ${fmtUsd(total)}${unpriced ? ` (+${unpriced} posisi n/a)` : ""}`,
     `💵 Fee berjalan: ${fmtUsd(fees)}`,
     `🟢 ${inR} in-range · 🔴 ${cards.length - inR} out`,
     pages > 1 ? `Hal ${pg + 1}/${pages}` : null,
@@ -219,7 +221,7 @@ function confirmFor(kind: "claim" | "remove", p: PositionCard, reposition: boole
   const summary = [
     kind === "claim" ? "💰 Claim fees" : reposition ? "♻️ Reposition — langkah 1: Exit (remove 100% + close)" : "🚪 Exit (remove 100% + close)",
     `Pool: ${p.pair} · Pos ${shortAddr(p.position)}`,
-    `Value ${fmtUsd(p.total_value_usd)} | fees ${fmtUsd(p.unclaimed_fees_usd)}`,
+    `Value ${usdOrNa(p.total_value_usd)} | fees ${usdOrNa(p.unclaimed_fees_usd)}`,
     reposition ? `Langkah 2: panel Add terbuka dengan ${Math.min(width, 69)} bins di sekitar harga sekarang (perlu Preview + Confirm lagi).` : "",
     cfg.dryRun ? "Mode: DRY_RUN" : "Mode: LIVE",
     `Konfirmasi dalam ${CONFIRM_TTL_MS / 1000}s.`,

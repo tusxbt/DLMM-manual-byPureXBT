@@ -19,6 +19,8 @@ export type ExecResult = {
   signatures: string[];
   error?: string;
   message?: string;
+  /** ms per tx (send → confirmed) */
+  timings?: number[];
 };
 
 export function assertUsdCap(kind: "position" | "swap", usd: number): void {
@@ -107,55 +109,118 @@ export async function executePendingTxs(
   }
 
   const wallet = getWallet();
-  const conn = getConnection();
   const signatures: string[] = [];
+  const timings: number[] = [];
 
   try {
-    for (let i = 0; i < items.length; i++) {
-      const item = items[i];
-      const buf = Buffer.from(item.serialized, "base64");
-      if (item.encoding === "versioned") {
-        const tx = VersionedTransaction.deserialize(buf);
-        // VersionedTransaction.sign only fills the given signers' slots; existing sigs kept
-        const needed = new Set(
-          tx.message.staticAccountKeys.slice(0, tx.message.header.numRequiredSignatures).map((k) => k.toBase58()),
-        );
-        const use = [wallet, ...extraSigners].filter((s) => needed.has(s.publicKey.toBase58()));
-        if (use.length) tx.sign(use);
-        assertAllSigned(tx, item.label);
-        const sig = await conn.sendRawTransaction(tx.serialize(), { skipPreflight: false, maxRetries: 3 });
-        await conn.confirmTransaction(
-          {
-            signature: sig,
-            blockhash: tx.message.recentBlockhash,
-            lastValidBlockHeight: (await conn.getLatestBlockhash("confirmed")).lastValidBlockHeight,
-          },
-          "confirmed",
-        );
-        signatures.push(sig);
-        log("exec", `sent versioned ${item.label} sig=${sig.slice(0, 12)}…`);
-      } else {
-        // NOTE: sendAndConfirmTransaction(conn, tx, signers) re-fetches the blockhash and calls
-        // tx.sign(), which WIPES pre-existing partial signatures (position keypair). Root cause
-        // of "Missing signature for public key". Use partialSign + sendRawTransaction instead.
-        const tx = Transaction.from(buf);
-        signLegacyPreserving(tx, [wallet, ...extraSigners]);
-        assertAllSigned(tx, item.label);
-        const sig = await conn.sendRawTransaction(tx.serialize(), { skipPreflight: false, maxRetries: 3 });
-        const latest = await conn.getLatestBlockhash("confirmed");
-        const res = await conn.confirmTransaction(
-          { signature: sig, blockhash: tx.recentBlockhash!, lastValidBlockHeight: latest.lastValidBlockHeight },
-          "confirmed",
-        );
-        if (res.value.err) throw new Error(`Tx ${item.label} gagal on-chain: ${JSON.stringify(res.value.err)}`);
-        signatures.push(sig);
-        log("exec", `sent legacy ${item.label} sig=${sig.slice(0, 12)}…`);
-      }
+    for (const item of items) {
+      const t = Date.now();
+      const sig = await sendWithRetry(item, [wallet, ...extraSigners, ...(item.coSigners || [])]);
+      timings.push(Date.now() - t);
+      signatures.push(sig);
     }
-    return { success: true, signatures };
+    return { success: true, signatures, timings };
   } catch (e) {
     const msg = (e as Error).message || String(e);
     log("exec", `failed: ${msg}`, "error");
-    return { success: false, signatures, error: msg };
+    return { success: false, signatures, error: msg, timings };
+  }
+}
+
+export const MAX_SEND_ATTEMPTS = 3; // first try + 2 automatic rebuilds on expiry
+const REBROADCAST_MS = 2000;
+
+type Sendable = { tx: Transaction | VersionedTransaction; raw: Buffer; blockhash: string; lastValid: number };
+
+/** Deserialize, put a FRESH blockhash, sign with all available signers, verify signers. */
+export function prepareTx(
+  item: PendingTxItem,
+  signers: Signer[],
+  fresh: { blockhash: string; lastValidBlockHeight: number },
+): Sendable {
+  const buf = Buffer.from(item.serialized, "base64");
+  if (item.encoding === "versioned") {
+    const tx = VersionedTransaction.deserialize(buf);
+    const n = tx.message.header.numRequiredSignatures;
+    const needed = tx.message.staticAccountKeys.slice(0, n).map((k) => k.toBase58());
+    const have = new Set(signers.map((s) => s.publicKey.toBase58()));
+    const canRefresh = needed.every((k) => have.has(k));
+    if (canRefresh) {
+      tx.message.recentBlockhash = fresh.blockhash;
+      tx.signatures = needed.map(() => new Uint8Array(64));
+    }
+    const use = signers.filter((s) => needed.includes(s.publicKey.toBase58()));
+    if (use.length) tx.sign(use);
+    assertAllSigned(tx, item.label);
+    return {
+      tx,
+      raw: Buffer.from(tx.serialize()),
+      blockhash: tx.message.recentBlockhash,
+      lastValid: canRefresh ? fresh.lastValidBlockHeight : Number.MAX_SAFE_INTEGER,
+    };
+  }
+  const tx = Transaction.from(buf);
+  const msg = tx.compileMessage();
+  const needed = msg.accountKeys.slice(0, msg.header.numRequiredSignatures).map((k) => k.toBase58());
+  const have = new Set(signers.map((s) => s.publicKey.toBase58()));
+  const canRefresh = needed.every((k) => have.has(k));
+  if (canRefresh) {
+    // NOTE: never use sendAndConfirmTransaction / tx.sign on a tx with partial sigs we can't
+    // reproduce — here we hold ALL signers, so a full re-sign with a fresh blockhash is safe.
+    tx.recentBlockhash = fresh.blockhash;
+    tx.signatures = [];
+    tx.feePayer = tx.feePayer ?? signers[0].publicKey;
+    tx.sign(...signers.filter((s) => needed.includes(s.publicKey.toBase58())));
+  } else {
+    signLegacyPreserving(tx, signers);
+  }
+  assertAllSigned(tx, item.label);
+  return {
+    tx,
+    raw: tx.serialize(),
+    blockhash: tx.recentBlockhash!,
+    lastValid: canRefresh ? fresh.lastValidBlockHeight : Number.MAX_SAFE_INTEGER,
+  };
+}
+
+async function sendWithRetry(item: PendingTxItem, signers: Signer[]): Promise<string> {
+  const conn = getConnection();
+  let lastErr = "";
+  for (let attempt = 1; attempt <= MAX_SEND_ATTEMPTS; attempt++) {
+    const fresh = await conn.getLatestBlockhash("confirmed");
+    const s = prepareTx(item, signers, fresh);
+    const lastValid = s.lastValid === Number.MAX_SAFE_INTEGER ? fresh.lastValidBlockHeight : s.lastValid;
+    const sig = await conn.sendRawTransaction(s.raw, { skipPreflight: false, maxRetries: 0, preflightCommitment: "confirmed" });
+    log("exec", `sent ${item.label} try=${attempt} sig=${sig.slice(0, 12)}…`);
+    const outcome = await waitLanded(sig, s.raw, lastValid);
+    if (outcome === "ok") return sig;
+    if (typeof outcome === "object") throw new Error(`Tx ${item.label} gagal on-chain: ${JSON.stringify(outcome.err)}`);
+    lastErr = `blockhash kadaluarsa (try ${attempt})`;
+    log("exec", `${item.label} expired, ${attempt < MAX_SEND_ATTEMPTS ? "rebuild + retry" : "menyerah"}`, "warn");
+    if (s.lastValid === Number.MAX_SAFE_INTEGER) break; // cannot re-sign → no safe retry
+  }
+  throw new Error(`Tx ${item.label} tidak masuk: ${lastErr}. Cek wallet/posisi sebelum ulang.`);
+}
+
+/** Rebroadcast until confirmed, failed, or block height passes lastValid (then final status check). */
+async function waitLanded(sig: string, raw: Buffer, lastValid: number): Promise<"ok" | "expired" | { err: unknown }> {
+  const conn = getConnection();
+  for (;;) {
+    const st = (await conn.getSignatureStatuses([sig])).value[0];
+    if (st?.err) return { err: st.err };
+    if (st && (st.confirmationStatus === "confirmed" || st.confirmationStatus === "finalized")) return "ok";
+    const height = await conn.getBlockHeight("confirmed");
+    if (height > lastValid) {
+      const fin = (await conn.getSignatureStatuses([sig], { searchTransactionHistory: true })).value[0];
+      if (fin?.err) return { err: fin.err };
+      if (fin && fin.confirmationStatus) return "ok";
+      return "expired";
+    }
+    try {
+      await conn.sendRawTransaction(raw, { skipPreflight: true, maxRetries: 0 });
+    } catch {
+      /* rebroadcast best-effort */
+    }
+    await new Promise((r) => setTimeout(r, REBROADCAST_MS));
   }
 }

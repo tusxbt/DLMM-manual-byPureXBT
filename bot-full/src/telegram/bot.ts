@@ -362,18 +362,23 @@ async function runConfirmedAction(
   if (purpose === "claim" || purpose === "remove") {
     const pool = String(payload.pool);
     const position = String(payload.position);
+    // Built at EXECUTION time (never from preview); executor refreshes blockhash per attempt,
+    // rebroadcasts, and auto-rebuilds up to 2x on expiry. Remove = claim+remove+close in one flow.
+    const t0 = Date.now();
     const txs =
       purpose === "claim"
         ? await buildClaimFeeTxs({ poolAddress: pool, positionAddress: position })
         : await buildRemoveAndCloseTxs({ poolAddress: pool, positionAddress: position });
+    const tBuild = Date.now() - t0;
     const result = await executePendingTxs(txs);
     if (purpose === "remove" && result.success) {
       removeTrackedPosition(position);
     }
+    const timing = `⏱ build ${(tBuild / 1000).toFixed(1)}s · send ${((result.timings || []).reduce((a, b) => a + b, 0) / 1000).toFixed(1)}s (${txs.length} tx) · total ${((Date.now() - t0) / 1000).toFixed(1)}s`;
     return {
       success: result.success,
       signatures: result.signatures,
-      message: result.message || result.error,
+      message: [result.message || result.error || (purpose === "remove" ? "Claim+remove+close OK" : "Claim OK"), timing].join("\n"),
       error: result.error,
     };
   }

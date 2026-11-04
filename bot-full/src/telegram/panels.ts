@@ -188,7 +188,7 @@ async function deployPanel(ctx: Context): Promise<void> {
     await renderAddPanel(ctx, "⏳ Membangun preview…");
     await refreshPoolInfo(p); // fresh price + balances for exact bin math and cap
     const costUsd = depositUsd(p);
-    if (costUsd == null) return renderAddPanel(ctx, "⛔ Harga USD token tidak diketahui — cap MAX_POSITION_USD tidak bisa dicek. Pakai SOL side.");
+    if (costUsd == null) return renderAddPanel(ctx, "⛔ Harga USD (SOL/token) tidak tersedia — cap MAX_POSITION_USD tidak bisa dicek, deploy ditolak.");
     assertUsdCap("position", costUsd); // MAX_POSITION_USD safeguard (checked again on execute)
     if (p.side !== "one_sided_sol" && (p.amountToken ?? 0) > (p.tokenBalance ?? 0))
       return renderAddPanel(ctx, `⛔ Saldo ${tokenSymbol(p)} tidak cukup.`);

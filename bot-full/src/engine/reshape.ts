@@ -542,6 +542,7 @@ export async function executeReshape(input: {
     await withBlockhash(tx, user);
     tx.partialSign(positionKp);
     const item = serializeTx(tx, "reshape_readd");
+    item.coSigners = [positionKp];
     // Must sign with wallet; position already partialSigned inside serialized blob
     void getWallet; // ensure key module loaded
     const r = await executePendingTxs([item]);
