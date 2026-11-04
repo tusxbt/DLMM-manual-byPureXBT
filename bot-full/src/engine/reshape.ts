@@ -21,6 +21,7 @@ import {
   type BinAmounts,
 } from "./reshape-math.js";
 import { loadConfig } from "../config.js";
+import { meteoraSlippagePct } from "./slippage.js";
 import { addTrackedPosition } from "../store/positions.js";
 
 export type ReshapeAnalysis = {
@@ -534,7 +535,7 @@ export async function executeReshape(input: {
         maxBinId: range.maxBinId,
         strategyType: st,
       },
-      slippage: 1000,
+      slippage: meteoraSlippagePct(),
     });
     await withBlockhash(tx, user);
     tx.partialSign(positionKp);

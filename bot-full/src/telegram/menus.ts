@@ -11,9 +11,10 @@ export function mainMenuKeyboard(): InlineKeyboard {
     .text("🔄 Swap", "menu:swap")
     .text("♻️ Reshape", "menu:reshape")
     .row()
+    .text("⚡ Zapout", "menu:zapout")
     .text("💰 Balance", "menu:balance")
-    .text("⚙️ Settings", "menu:settings")
     .row()
+    .text("⚙️ Settings", "menu:settings")
     .text("🔍 Pools", "menu:pools");
 }
 

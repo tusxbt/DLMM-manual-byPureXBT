@@ -22,8 +22,8 @@ export async function searchPools(query: string, limit = 8): Promise<PoolHit[]> 
   const res = await fetch(url);
   if (!res.ok) throw new Error(`Pool search HTTP ${res.status}`);
   const data = await res.json();
-  const pools = (Array.isArray(data) ? data : data.data || []).slice(0, limit);
-  return pools.map((p: Record<string, unknown>) => {
+  const raw = (Array.isArray(data) ? data : data.data || []) as Record<string, unknown>[];
+  const mapped = raw.map((p: Record<string, unknown>) => {
     const poolConfig = (p.pool_config || {}) as Record<string, unknown>;
     const volume = (p.volume || {}) as Record<string, unknown>;
     return {
@@ -43,6 +43,12 @@ export async function searchPools(query: string, limit = 8): Promise<PoolHit[]> 
       },
     };
   });
+  mapped.sort((a, b) => {
+    const tv = (b.tvl ?? 0) - (a.tvl ?? 0);
+    if (tv !== 0) return tv;
+    return (b.volume_24h ?? 0) - (a.volume_24h ?? 0);
+  });
+  return mapped.slice(0, limit);
 }
 
 export async function getActiveBin(poolAddress: string): Promise<{ binId: number; price: number }> {

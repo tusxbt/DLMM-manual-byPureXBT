@@ -29,13 +29,41 @@ Kalau kamu tidak nyaman menyimpan private key di server, pakai `bot-safe/` (tand
 | `/claim` `/remove` | Claim / remove+close (butuh Confirm) |
 | `/swap` | Jupiter swap (butuh Confirm) |
 | `/reshape` | Claim fee + withdraw bin token + re-add BidAsk (butuh Confirm) |
+| `/zapout` | Claim → close 100% → swap semua token non-SOL ke SOL (Confirm) |
 | `/balance` | SOL/USDC (+ USD) |
-| `/settings` | DRY_RUN, caps, strategi |
+| `/settings` | DRY_RUN, caps, slippage, strategi |
+| *(paste mint/CA)* | Deteksi alamat Solana → daftar pool DLMM → wizard `/add` |
 
 Setiap deploy / swap / claim / remove menampilkan ringkasan + tombol **Confirm / Cancel** (timeout **60 detik**). Tidak ada trade otomatis / terjadwal.
 
 **Batas keras:** `MAX_POSITION_USD=100`, `MAX_SWAP_USD=100` (bisa diubah di `.env`).
 
+
+
+## /zapout
+
+Keluar dari posisi sekaligus:
+
+1. Claim swap fee (skip jika 0).
+2. Remove liquidity 100% + close posisi.
+3. Swap **semua** token non-SOL yang baru masuk ke wallet (delta saldo aktual = withdrawn + fee token) ke SOL via Jupiter.
+
+Satu ringkasan (est. USD, slippage) + Confirm/Cancel 60 detik. Tx berurutan; partial failure dilaporkan jelas. `DRY_RUN` mensimulasikan.
+
+**Cap:** zapout **dikecualikan** dari penolakan keras `MAX_SWAP_USD` (ini jalur exit), tetapi bot **memperingatkan** jika est. swap > cap.
+
+## Slippage
+
+| Env / setting | Default | Unit ke SDK |
+|---|---|---|
+| `SWAP_SLIPPAGE_PCT` | 10 | Jupiter `slippageBps` = pct × 100 (10% → 1000) |
+| `LIQ_SLIPPAGE_PCT` | 10 | Meteora `@meteora-ag/dlmm` **percentage** as-is (bukan bps!) |
+
+Temuan SDK 1.9.4: `getSlippageMaxAmount` memakai `(100 + slippage) / 100` dan `slippage == 100` = 100%. Nilai lama `1000` di kode referensi **salah** jika dimaksudkan 10% bps. Ubah lewat `/settings` (0.1–50%, tersimpan di `data/settings.json`).
+
+## Paste mint (CA)
+
+Kirim alamat mint Solana polos (base58 32–44, valid `PublicKey`) di chat. Bot mencari pool DLMM (Meteora datapi), menampilkan hingga 8 pool (urut TVL/volume) sebagai tombol, lalu masuk wizard `/add` (amount → strategi → range → Confirm).
 
 ## /reshape
 

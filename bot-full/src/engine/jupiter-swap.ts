@@ -7,6 +7,7 @@ import { getConnection } from "./connection.js";
 import { getWalletPublicKey } from "./wallet.js";
 import type { PendingTxItem } from "./pending.js";
 import { log } from "../logger.js";
+import { jupiterSlippageBps } from "./slippage.js";
 
 const QUOTE_API = "https://quote-api.jup.ag/v6/quote";
 const SWAP_API = "https://quote-api.jup.ag/v6/swap";
@@ -34,7 +35,7 @@ export async function getSwapQuote(input: {
 }): Promise<SwapQuote> {
   const inputMint = normalizeMint(input.inputMint);
   const outputMint = normalizeMint(input.outputMint);
-  const slippageBps = input.slippageBps ?? 100;
+  const slippageBps = input.slippageBps ?? jupiterSlippageBps();
   const url =
     `${QUOTE_API}?inputMint=${inputMint}&outputMint=${outputMint}` +
     `&amount=${input.amountAtomic}&slippageBps=${slippageBps}`;

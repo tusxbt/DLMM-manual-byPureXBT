@@ -24,6 +24,14 @@ import {
   onReshapeWidth,
   executeReshape,
 } from "./reshape-handlers.js";
+import { startZapout, onZapoutPos, executeZapout } from "./zapout-handlers.js";
+import { detectMintAddress } from "../engine/mint-detect.js";
+import {
+  getSwapSlippagePct,
+  getLiqSlippagePct,
+  setSwapSlippagePct,
+  setLiqSlippagePct,
+} from "../engine/slippage.js";
 
 function chatKey(ctx: Context): string {
   return String(ctx.chat?.id ?? "");
@@ -78,6 +86,7 @@ export function createBot(): Bot {
   bot.command("claim", async (ctx) => startClaim(ctx));
   bot.command("swap", async (ctx) => startSwap(ctx));
   bot.command("reshape", async (ctx) => startReshape(ctx));
+  bot.command("zapout", async (ctx) => startZapout(ctx));
 
   bot.callbackQuery(/^menu:(.+)$/, async (ctx) => {
     await ctx.answerCallbackQuery();
@@ -95,6 +104,7 @@ export function createBot(): Bot {
       remove: startRemove,
       swap: startSwap,
       reshape: startReshape,
+      zapout: startZapout,
       balance: showBalance,
       settings: showSettings,
       pools: async (c) => {
@@ -388,6 +398,34 @@ export function createBot(): Bot {
     await onReshapeWidth(ctx, ctx.match![1]);
   });
 
+  bot.callbackQuery(/^zapout:pos:(\d+)$/, async (ctx) => {
+    await ctx.answerCallbackQuery();
+    await onZapoutPos(ctx, Number(ctx.match![1]));
+  });
+
+  bot.callbackQuery(/^settings:slip:(swap|liq)$/, async (ctx) => {
+    await ctx.answerCallbackQuery();
+    const kind = ctx.match![1] as "swap" | "liq";
+    const s = getSession(chatKey(ctx));
+    s.awaitingText = async (text) => {
+      try {
+        const n = Number(String(text).replace(",", "."));
+        if (kind === "swap") setSwapSlippagePct(n);
+        else setLiqSlippagePct(n);
+        await ctx.reply(
+          `✅ ${kind === "swap" ? "SWAP" : "LIQ"}_SLIPPAGE_PCT = ${kind === "swap" ? getSwapSlippagePct() : getLiqSlippagePct()}% (tersimpan)`,
+          { reply_markup: mainMenuKeyboard() },
+        );
+      } catch (e) {
+        await ctx.reply(`❌ ${(e as Error).message}`, { reply_markup: mainMenuKeyboard() });
+      }
+    };
+    await ctx.reply(
+      `Ketik ${kind === "swap" ? "swap" : "liquidity"} slippage dalam % (0.1–50). Sekarang: ${kind === "swap" ? getSwapSlippagePct() : getLiqSlippagePct()}%`,
+      { reply_markup: CANCEL_KB },
+    );
+  });
+
   bot.on("message:text", async (ctx) => {
     const s = getSession(chatKey(ctx));
     if (s.awaitingText) {
@@ -397,8 +435,9 @@ export function createBot(): Bot {
       return;
     }
     const t = ctx.message.text.trim();
-    if (/^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(t)) {
-      await doPools(ctx, t);
+    const mint = detectMintAddress(t);
+    if (mint) {
+      await doPools(ctx, mint, true); // paste CA → list pools → add wizard
       return;
     }
     await replyMenu(ctx);
@@ -504,6 +543,21 @@ async function runConfirmedAction(
     };
   }
 
+  if (purpose === "zapout") {
+    const result = await executeZapout({
+      poolAddress: String(payload.pool),
+      positionAddress: String(payload.position),
+      poolName: String(payload.pool_name || ""),
+      analysis: payload.analysis as never,
+    });
+    return {
+      success: result.success,
+      signatures: result.signatures,
+      message: result.message,
+      error: result.error,
+    };
+  }
+
   return { success: false, error: `purpose tidak dikenal: ${purpose}` };
 }
 
@@ -588,9 +642,12 @@ async function startAdd(ctx: Context): Promise<void> {
 
 async function doPools(ctx: Context, query: string, forAdd = false): Promise<void> {
   try {
-    const pools = await searchPools(query, 6);
+    const pools = await searchPools(query, 8);
     if (!pools.length) {
-      await ctx.reply("Tidak ada pool.");
+      await ctx.reply(
+        `Tidak ada pool DLMM untuk “${query}”. Coba mint lain atau /pools.`,
+        { reply_markup: mainMenuKeyboard() },
+      );
       return;
     }
     const s = getSession(chatKey(ctx));
@@ -598,10 +655,14 @@ async function doPools(ctx: Context, query: string, forAdd = false): Promise<voi
     if (forAdd) {
       const kb = new InlineKeyboard();
       pools.forEach((p, i) => {
-        kb.text(`${p.name} | ${p.bin_step} | ${fmtNum(p.fee_pct, 2)}%`, `add:pool:${i}`).row();
+        const label = `${p.name} | step ${p.bin_step} | fee ${fmtNum(p.fee_pct, 2)}% | TVL ${fmtUsd(p.tvl)}`;
+        kb.text(label.slice(0, 64), `add:pool:${i}`).row();
       });
       kb.text("❌ Batal", "menu:cancel");
-      await ctx.reply("Pilih pool untuk Add:", { reply_markup: kb });
+      await ctx.reply(
+        `Pilih pool DLMM untuk Add (urut TVL, max ${pools.length}):`,
+        { reply_markup: kb },
+      );
       return;
     }
     const lines = pools.map(
@@ -640,7 +701,7 @@ async function showPositions(ctx: Context): Promise<void> {
     const kb = new InlineKeyboard();
     s.data.posList.forEach((_, i) => {
       kb.text(`Claim ${i + 1}`, `pos:claim:${i}`).text(`Remove ${i + 1}`, `pos:remove:${i}`).row();
-      kb.text(`Reshape ${i + 1}`, `reshape:pos:${i}`).row();
+      kb.text(`Reshape ${i + 1}`, `reshape:pos:${i}`).text(`Zapout ${i + 1}`, `zapout:pos:${i}`).row();
     });
     kb.text("⬅️ Menu", "menu:cancel");
     await ctx.reply(["📊 Positions:", ...lines].join("\n\n"), { reply_markup: kb });
@@ -684,22 +745,31 @@ async function showSettings(ctx: Context): Promise<void> {
   const strats = listStrategies()
     .map((x) => `• ${x.label} (\`${x.id}\`) — ${x.description}`)
     .join("\n");
+  const kb = new InlineKeyboard()
+    .text(`SWAP slip ${getSwapSlippagePct()}%`, "settings:slip:swap")
+    .text(`LIQ slip ${getLiqSlippagePct()}%`, "settings:slip:liq")
+    .row()
+    .text("⬅️ Menu", "menu:cancel");
   await ctx.reply(
     [
       "⚙️ Settings",
       `DRY_RUN: ${cfg.dryRun}`,
       `MAX_POSITION_USD: ${cfg.maxPositionUsd}`,
       `MAX_SWAP_USD: ${cfg.maxSwapUsd}`,
+      `SWAP_SLIPPAGE_PCT: ${getSwapSlippagePct()}% (Jupiter bps = ×100)`,
+      `LIQ_SLIPPAGE_PCT: ${getLiqSlippagePct()}% (Meteora percentage as-is)`,
       `Amount presets: ${s.amountPresets.join(", ")} SOL`,
       "",
       "Strategi terdaftar:",
       strats,
       "",
-      "Edit `.env` untuk DRY_RUN / caps. Strategi baru: tambah file di src/strategies/.",
+      "Tekan tombol slip untuk ubah (0.1–50%, tersimpan di data/settings.json).",
+      "Zapout dikecualikan dari penolakan keras MAX_SWAP_USD (hanya peringatan).",
     ].join("\n"),
-    { reply_markup: mainMenuKeyboard() },
+    { reply_markup: kb },
   );
 }
+
 
 async function startSwap(ctx: Context): Promise<void> {
   resetSession(chatKey(ctx));

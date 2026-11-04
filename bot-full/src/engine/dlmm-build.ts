@@ -14,6 +14,7 @@ import { getDLMM } from "./dlmmSdk.js";
 import type { PendingTxItem } from "./pending.js";
 import type { StrategyDefinition, StrategySide, ResolvedRange } from "../strategies/types.js";
 import { log } from "../logger.js";
+import { meteoraSlippagePct } from "./slippage.js";
 
 function serializeTx(tx: Transaction): PendingTxItem {
   // Ensure recent blockhash + feePayer set by caller
@@ -106,7 +107,7 @@ export async function buildAddLiquidityTxs(input: {
     totalXAmount: amountX,
     totalYAmount: amountY,
     strategy: { minBinId, maxBinId, strategyType: st },
-    slippage: 1000, // 10% in bps (SDK variant)
+    slippage: meteoraSlippagePct(),
   });
 
   await withBlockhash(tx, user);

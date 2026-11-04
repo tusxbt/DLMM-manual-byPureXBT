@@ -5,7 +5,7 @@ import crypto from "node:crypto";
 import { CONFIRM_TTL_MS } from "../config.js";
 import { log } from "../logger.js";
 
-export type ConfirmPurpose = "add" | "remove" | "claim" | "swap" | "reshape";
+export type ConfirmPurpose = "add" | "remove" | "claim" | "swap" | "reshape" | "zapout";
 
 export type ConfirmRequest = {
   id: string;
