@@ -1,3 +1,4 @@
+import { presentConfirm } from "./confirm-ui.js";
 import { InlineKeyboard, type Context } from "grammy";
 import { loadConfig, CONFIRM_TTL_MS } from "../config.js";
 import { fmtUsd, shortAddr } from "../format.js";
@@ -183,6 +184,6 @@ async function finalizeReshapeConfirm(ctx: Context, width: number): Promise<void
   resetSession(chatKey(ctx));
   // Telegram hard limit — truncate if needed
   const text = summary.length > 3500 ? summary.slice(0, 3490) + "\n…" : summary;
-  await ctx.reply(text, { reply_markup: confirmKeyboard(req.id) });
+  await presentConfirm(ctx, text, req.id);
 }
 

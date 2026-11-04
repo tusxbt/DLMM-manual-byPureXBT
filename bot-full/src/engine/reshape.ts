@@ -6,6 +6,7 @@ import BN from "bn.js";
 import { SOL_MINT } from "../config.js";
 import { log } from "../logger.js";
 import { getConnection } from "./connection.js";
+import { applyPriorityFee, getPriorityFeeMicroLamports } from "./priority.js";
 import { getDLMM } from "./dlmmSdk.js";
 import { getWallet, getWalletPublicKey } from "./wallet.js";
 import { assertUsdCap, executePendingTxs } from "./executor.js";
@@ -65,6 +66,7 @@ function serializeTx(tx: Transaction, label: string): PendingTxItem {
 }
 
 async function withBlockhash(tx: Transaction, feePayer: PublicKey): Promise<Transaction> {
+  applyPriorityFee(tx, await getPriorityFeeMicroLamports());
   const conn = getConnection();
   const { blockhash } = await conn.getLatestBlockhash("confirmed");
   tx.feePayer = feePayer;

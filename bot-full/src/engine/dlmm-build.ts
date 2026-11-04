@@ -15,6 +15,7 @@ import type { PendingTxItem } from "./pending.js";
 import type { StrategyDefinition, StrategySide, ResolvedRange } from "../strategies/types.js";
 import { log } from "../logger.js";
 import { meteoraSlippagePct } from "./slippage.js";
+import { applyPriorityFee, getPriorityFeeMicroLamports } from "./priority.js";
 
 function serializeTx(tx: Transaction): PendingTxItem {
   // Ensure recent blockhash + feePayer set by caller
@@ -25,6 +26,7 @@ function serializeTx(tx: Transaction): PendingTxItem {
 }
 
 async function withBlockhash(tx: Transaction, feePayer: PublicKey): Promise<Transaction> {
+  applyPriorityFee(tx, await getPriorityFeeMicroLamports());
   const conn = getConnection();
   const { blockhash, lastValidBlockHeight } = await conn.getLatestBlockhash("confirmed");
   tx.feePayer = feePayer;

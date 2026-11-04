@@ -1,3 +1,4 @@
+import { presentConfirm, isAutoConfirm, AUTO_BADGE } from "./confirm-ui.js";
 /**
  * Positions view: one card message per DLMM position, edit-in-place refresh,
  * all actions routed through the existing Confirm/Cancel gate.
@@ -146,7 +147,11 @@ export async function showPositionCards(ctx: Context): Promise<void> {
       await ctx.api.editMessageText(ctx.chat!.id, loading.message_id, "Tidak ada posisi DLMM terbuka.");
       return;
     }
-    await ctx.api.editMessageText(ctx.chat!.id, loading.message_id, `📊 ${cards.length} posisi DLMM:`);
+    await ctx.api.editMessageText(
+      ctx.chat!.id,
+      loading.message_id,
+      `📊 ${cards.length} posisi DLMM:${isAutoConfirm() ? `\n${AUTO_BADGE} — tombol aksi langsung eksekusi` : ""}`,
+    );
     for (let i = 0; i < cards.length; i++) {
       await ctx.reply(renderPositionCard(cards[i]), {
         reply_markup: positionKeyboard(i),
@@ -226,6 +231,6 @@ export function registerPositionsView(bot: Bot): void {
     if (action === "zap") return onZapoutPos(ctx, i);
     if (action === "flip") return onReshapePos(ctx, i);
     const c = confirmFor(action === "claim" ? "claim" : "remove", p, action === "repo");
-    await ctx.reply(c.text, { reply_markup: confirmKeyboard(c.id) });
+    await presentConfirm(ctx, c.text, c.id);
   });
 }

@@ -6,6 +6,7 @@ import { PublicKey, Transaction } from "@solana/web3.js";
 import BN from "bn.js";
 import { loadConfig, SOL_MINT } from "../config.js";
 import { getConnection } from "./connection.js";
+import { applyPriorityFee, getPriorityFeeMicroLamports } from "./priority.js";
 import { getDLMM } from "./dlmmSdk.js";
 import { getWalletPublicKey } from "./wallet.js";
 import { executePendingTxs } from "./executor.js";
@@ -47,6 +48,7 @@ function serializeTx(tx: Transaction, label: string): PendingTxItem {
 }
 
 async function withBlockhash(tx: Transaction, feePayer: PublicKey): Promise<Transaction> {
+  applyPriorityFee(tx, await getPriorityFeeMicroLamports());
   const { blockhash } = await getConnection().getLatestBlockhash("confirmed");
   tx.feePayer = feePayer;
   tx.recentBlockhash = blockhash;
@@ -203,153 +205,138 @@ export async function executeZapout(input: {
     };
   }
 
+  const t0 = Date.now();
+  const timing: Array<[string, number]> = [];
+  const lap = (name: string, from: number) => timing.push([name, Date.now() - from]);
   const { DLMM } = await getDLMM();
   const conn = getConnection();
-  const pool = await DLMM.create(conn, new PublicKey(input.poolAddress));
   const positionPubKey = new PublicKey(input.positionAddress);
-  const tokenMint = analysis.tokenMint;
+  const swapMints = nonSolMints(analysis.mintX, analysis.mintY);
 
-  const balBefore = await getTokenBalanceAtomic(tokenMint, user);
+  // pool load + pre-balances in parallel
+  let tPrep = Date.now();
+  const [pool, ...balBefore] = await Promise.all([
+    DLMM.create(conn, new PublicKey(input.poolAddress)),
+    ...swapMints.map((m) => getTokenBalanceAtomic(m, user)),
+  ]);
+  lap("prep", tPrep);
 
-  // ── 1) Claim ─────────────────────────────────────────────────
-  try {
-    const positionData = await pool.getPosition(positionPubKey);
-    const claimTxs: Transaction[] = await pool.claimSwapFee({
-      owner: user,
-      position: positionData,
-    });
-    if (!claimTxs?.length) {
-      steps.push({ step: "claim", ok: true, detail: "Skip claim — tidak ada fee tx" });
-    } else {
-      const items: PendingTxItem[] = [];
-      for (let i = 0; i < claimTxs.length; i++) {
-        items.push(serializeTx(await withBlockhash(claimTxs[i], user), `zapout_claim_${i + 1}`));
-      }
-      const r = await executePendingTxs(items);
-      allSigs.push(...r.signatures);
-      if (!r.success) {
-        steps.push({ step: "claim", ok: false, detail: r.error || "claim gagal", signatures: r.signatures });
-        return partial("claim gagal", steps, allSigs, r.error);
-      }
-      steps.push({ step: "claim", ok: true, detail: `Claim OK (${r.signatures.length} tx)`, signatures: r.signatures });
-    }
-  } catch (e) {
-    const msg = (e as Error).message;
-    if (/no fees|empty|tidak ada fee/i.test(msg)) {
-      steps.push({ step: "claim", ok: true, detail: `Skip claim — ${msg}` });
-    } else {
-      steps.push({ step: "claim", ok: false, detail: msg });
-      return partial("claim gagal", steps, allSigs, msg);
-    }
-  }
-
-  // ── 2) Remove 100% + close ───────────────────────────────────
+  // ── 1) Remove 100% + claim + close in as few txs as SDK allows ──
+  const tClose = Date.now();
   try {
     const positionData = await pool.getPosition(positionPubKey);
     const binIds = (positionData.positionData?.positionBinData || []).map(
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       (b: any) => b.binId as number,
     );
-    const fromBin = binIds.length
-      ? Math.min(...binIds)
-      : positionData.positionData?.lowerBinId ?? -887272;
-    const toBin = binIds.length
-      ? Math.max(...binIds)
-      : positionData.positionData?.upperBinId ?? 887272;
-
+    const fromBin = binIds.length ? Math.min(...binIds) : positionData.positionData?.lowerBinId ?? -887272;
+    const toBin = binIds.length ? Math.max(...binIds) : positionData.positionData?.upperBinId ?? 887272;
     const removeResult = await pool.removeLiquidity({
       user,
       position: positionPubKey,
       fromBinId: fromBin,
       toBinId: toBin,
       bps: new BN(10_000),
-      shouldClaimAndClose: true,
+      shouldClaimAndClose: true, // claims fees + rewards and closes in the same tx(s)
     });
     const removeTxs: Transaction[] = Array.isArray(removeResult) ? removeResult : [removeResult];
     const items: PendingTxItem[] = [];
     for (let i = 0; i < removeTxs.length; i++) {
       items.push(serializeTx(await withBlockhash(removeTxs[i], user), `zapout_close_${i + 1}`));
     }
-    const r = await executePendingTxs(items);
+    const r = await executePendingTxs(items); // confirms at "confirmed"
     allSigs.push(...r.signatures);
     if (!r.success) {
-      steps.push({
-        step: "remove_close",
-        ok: false,
-        detail: r.error || "remove/close gagal",
-        signatures: r.signatures,
-      });
-      return partial("remove/close gagal — claim mungkin sudah sukses", steps, allSigs, r.error);
+      steps.push({ step: "claim_remove_close", ok: false, detail: r.error || "remove/close gagal", signatures: r.signatures });
+      return partial("remove/close gagal", steps, allSigs, r.error, timing);
     }
+    lap("claim+remove+close", tClose);
     steps.push({
-      step: "remove_close",
+      step: "claim_remove_close",
       ok: true,
-      detail: `Remove+close OK (${r.signatures.length} tx)`,
+      detail: `Claim+remove+close OK (${r.signatures.length} tx)`,
       signatures: r.signatures,
     });
     removeTrackedPosition(input.positionAddress);
   } catch (e) {
     const msg = (e as Error).message;
-    steps.push({ step: "remove_close", ok: false, detail: msg });
-    return partial("remove/close gagal", steps, allSigs, msg);
+    steps.push({ step: "claim_remove_close", ok: false, detail: msg });
+    return partial("remove/close gagal", steps, allSigs, msg, timing);
   }
 
-  await new Promise((r) => setTimeout(r, 2000));
-  const balAfter = await getTokenBalanceAtomic(tokenMint, user);
-  const delta = balAfter - balBefore;
-
-  if (delta <= 0n) {
-    steps.push({
-      step: "swap",
-      ok: true,
-      detail: "Tidak ada token non-SOL untuk di-swap (delta ≤ 0). SOL sudah di wallet.",
-    });
-    return {
-      success: true,
-      signatures: allSigs,
-      message: ["Zapout selesai (tanpa swap token).", ...steps.map((s) => `• ${s.step}: ${s.detail}`)].join("\n"),
-      steps,
-    };
+  // ── 2) Balance deltas (confirmed) → parallel quotes → swaps ──
+  const tQuote = Date.now();
+  const balAfter = await Promise.all(swapMints.map((m) => getTokenBalanceAtomic(m, user)));
+  const deltas = swapMints.map((m, i) => ({ mint: m, delta: balAfter[i] - (balBefore[i] as bigint) }));
+  const todo = deltas.filter((d) => d.delta > 0n);
+  if (!todo.length) {
+    steps.push({ step: "swap", ok: true, detail: "Tidak ada token non-SOL untuk di-swap (delta ≤ 0)." });
+    lap("total", t0);
+    return done("Zapout selesai (tanpa swap).", steps, allSigs, timing);
   }
-
-  // ── 3) Swap all token delta → SOL ────────────────────────────
-  try {
-    const quote = await getSwapQuote({
-      inputMint: tokenMint,
-      outputMint: SOL_MINT,
-      amountAtomic: delta.toString(),
-      slippageBps: jupiterSlippageBps(),
-    });
-    const tx = await buildSwapTx({ quote });
-    const r = await executePendingTxs([tx]);
-    allSigs.push(...r.signatures);
-    if (!r.success) {
+  const built = await Promise.allSettled(
+    todo.map(async (d) => {
+      const quote = await getSwapQuote({
+        inputMint: d.mint,
+        outputMint: SOL_MINT,
+        amountAtomic: d.delta.toString(),
+        slippageBps: jupiterSlippageBps(),
+      });
+      return { d, quote, tx: await buildSwapTx({ quote }) };
+    }),
+  );
+  lap("quote+build", tQuote);
+  const tSwap = Date.now();
+  const sent = await Promise.allSettled(
+    built.map(async (b, i) => {
+      if (b.status === "rejected") throw new Error(`quote ${todo[i].mint.slice(0, 4)}…: ${(b.reason as Error).message}`);
+      const r = await executePendingTxs([b.value.tx]);
+      if (!r.success) throw new Error(`swap ${todo[i].mint.slice(0, 4)}…: ${r.error}`);
+      return { r, quote: b.value.quote, d: b.value.d };
+    }),
+  );
+  lap("swap", tSwap);
+  let allOk = true;
+  for (const x of sent) {
+    if (x.status === "fulfilled") {
+      allSigs.push(...x.value.r.signatures);
       steps.push({
         step: "swap",
-        ok: false,
-        detail: `Swap gagal: ${r.error}. Token (+${delta.toString()} atomic) masih di wallet.`,
-        signatures: r.signatures,
+        ok: true,
+        detail: `${x.value.d.mint.slice(0, 4)}… in=${x.value.d.delta} → est ${(Number(x.value.quote.outAmount) / 1e9).toFixed(6)} SOL`,
+        signatures: x.value.r.signatures,
       });
-      return partial("swap gagal setelah close sukses — token masih di wallet", steps, allSigs, r.error);
+    } else {
+      allOk = false;
+      steps.push({ step: "swap", ok: false, detail: `${(x.reason as Error).message} — token masih di wallet` });
     }
-    const outUi = Number(quote.outAmount) / 1e9;
-    steps.push({
-      step: "swap",
-      ok: true,
-      detail: `Swap OK in=${delta.toString()} → est SOL ${outUi} (slip ${getSwapSlippagePct()}%)`,
-      signatures: r.signatures,
-    });
-    return {
-      success: true,
-      signatures: allSigs,
-      message: ["Zapout selesai.", ...steps.map((s) => `• ${s.step}: ${s.detail}`)].join("\n"),
-      steps,
-    };
-  } catch (e) {
-    const msg = (e as Error).message;
-    steps.push({ step: "swap", ok: false, detail: msg });
-    return partial("swap gagal — token masih di wallet", steps, allSigs, msg);
   }
+  lap("total", t0);
+  if (!allOk) return partial("Swap sebagian gagal — posisi sudah tertutup, token sisa di wallet", steps, allSigs, "swap gagal", timing);
+  return done("Zapout selesai.", steps, allSigs, timing);
+}
+
+export function nonSolMints(mintX: string, mintY: string): string[] {
+  return [mintX, mintY].filter((m, i, a) => m && m !== SOL_MINT && a.indexOf(m) === i);
+}
+
+export function formatTiming(timing: Array<[string, number]>): string {
+  if (!timing.length) return "";
+  return "⏱ " + timing.map(([k, ms]) => `${k} ${(ms / 1000).toFixed(1)}s`).join(" · ");
+}
+
+function done(
+  headline: string,
+  steps: ZapoutExecResult["steps"],
+  sigs: string[],
+  timing: Array<[string, number]>,
+): ZapoutExecResult {
+  return {
+    success: true,
+    signatures: sigs,
+    message: [headline, ...steps.map((s) => `• ${s.step}: ${s.detail}`), formatTiming(timing)].filter(Boolean).join("\n"),
+    steps,
+  };
 }
 
 function partial(
@@ -357,11 +344,14 @@ function partial(
   steps: ZapoutExecResult["steps"],
   sigs: string[],
   error?: string,
+  timing: Array<[string, number]> = [],
 ): ZapoutExecResult {
   return {
     success: false,
     signatures: sigs,
-    message: [headline, ...steps.map((s) => `${s.ok ? "✅" : "❌"} ${s.step}: ${s.detail}`)].join("\n"),
+    message: [headline, ...steps.map((s) => `${s.ok ? "✅" : "❌"} ${s.step}: ${s.detail}`), formatTiming(timing)]
+      .filter(Boolean)
+      .join("\n"),
     error,
     steps,
   };
@@ -376,7 +366,7 @@ export function formatZapoutPreview(a: ZapoutAnalysis): string {
     `Est. token keluar (liq+fee): ${a.estTokenOutUi} ≈ $${a.estTokenOutUsd.toFixed(2)}`,
     `Fee: token ${a.feeTokenUi} | SOL ${a.feeSolUi} (SOL fee tetap di wallet)`,
     `Slippage swap: ${a.swapSlippagePct}% (${jupiterSlippageBps(a.swapSlippagePct)} bps Jupiter)`,
-    "Langkah: claim → remove 100%+close → swap SEMUA token non-SOL → SOL",
+    "Langkah (cepat): claim+remove 100%+close (1 alur, priority fee) → swap paralel SEMUA token non-SOL → SOL",
   ];
   if (a.warnOverCap) lines.push(a.warnOverCap);
   return lines.join("\n");

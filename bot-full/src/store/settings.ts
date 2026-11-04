@@ -7,6 +7,12 @@ export type Settings = {
   rangePresets: { down: number; up: number }[];
   /** Bin-count range presets for /add (each 1–69). */
   binPresets: { narrow: number; medium: number; wide: number };
+  /** Skip Confirm/Cancel and execute right after Preview/button (safeguards still enforced). */
+  autoConfirm: boolean;
+  /** ComputeBudget price for DLMM txs, micro-lamports per CU. 0 = auto (recent fees). */
+  priorityFeeMicroLamports: number;
+  /** Max priority fee Jupiter may add per swap, in lamports. */
+  jupPriorityMaxLamports: number;
   /** Jupiter swap slippage in percent (0.1–50). Converted to bps at quote time. */
   swapSlippagePct: number;
   /** Meteora DLMM add-liquidity slippage in percent (0.1–50). Passed as-is to SDK. */
@@ -33,6 +39,17 @@ export function coerceBinPresets(
   return { narrow: c(o.narrow, fallback.narrow), medium: c(o.medium, fallback.medium), wide: c(o.wide, fallback.wide) };
 }
 
+export function clampInt(v: unknown, fallback: number, min: number, max: number): number {
+  const n = Math.floor(Number(v));
+  if (v == null || !Number.isFinite(n)) return fallback;
+  return Math.min(max, Math.max(min, n));
+}
+
+function envInt(name: string, fallback: number, min: number, max: number): number {
+  const raw = process.env[name]?.trim();
+  return raw ? clampInt(raw, fallback, min, max) : fallback;
+}
+
 function envPct(name: string, fallback: number): number {
   const raw = process.env[name]?.trim();
   if (!raw) return fallback;
@@ -48,6 +65,9 @@ function buildDefault(): Settings {
       { down: 50, up: 0 },
     ],
     binPresets: { narrow: 20, medium: 40, wide: 69 },
+    autoConfirm: false,
+    priorityFeeMicroLamports: envInt("PRIORITY_FEE_MICROLAMPORTS", 0, 0, 5_000_000),
+    jupPriorityMaxLamports: envInt("JUP_PRIORITY_MAX_LAMPORTS", 1_000_000, 0, 10_000_000),
     swapSlippagePct: envPct("SWAP_SLIPPAGE_PCT", 10),
     liqSlippagePct: envPct("LIQ_SLIPPAGE_PCT", 10),
   };
@@ -70,6 +90,9 @@ export function loadSettings(): Settings {
     ...structuredClone(defaults),
     ...s,
     binPresets: coerceBinPresets(s.binPresets, defaults.binPresets),
+    autoConfirm: s.autoConfirm === true,
+    priorityFeeMicroLamports: clampInt(s.priorityFeeMicroLamports, defaults.priorityFeeMicroLamports, 0, 5_000_000),
+    jupPriorityMaxLamports: clampInt(s.jupPriorityMaxLamports, defaults.jupPriorityMaxLamports, 0, 10_000_000),
     swapSlippagePct: coercePct(Number(s.swapSlippagePct ?? defaults.swapSlippagePct), defaults.swapSlippagePct),
     liqSlippagePct: coercePct(Number(s.liqSlippagePct ?? defaults.liqSlippagePct), defaults.liqSlippagePct),
   };

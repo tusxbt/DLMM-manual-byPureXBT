@@ -1,3 +1,5 @@
+import { presentConfirm, setConfirmRunner } from "./confirm-ui.js";
+import type { ConfirmRequest } from "../engine/confirm.js";
 import { Bot, InlineKeyboard, type Context } from "grammy";
 import { loadConfig, CONFIRM_TTL_MS } from "../config.js";
 import { fmtNum, fmtUsd, shortAddr, strategyLabel, solscanTx } from "../format.js";
@@ -154,34 +156,10 @@ export function createBot(): Bot {
       return;
     }
     await ctx.editMessageText(`⏳ Menjalankan ${req.purpose}${cfg.dryRun ? " (DRY_RUN)" : ""}…`);
-    try {
-      const result = await runConfirmedAction(req.purpose, req.payload);
-      markConfirm(id, result.success ? "executed" : "failed", result.message);
-      const sigLines = (result.signatures || [])
-        .map((s) => (s.startsWith("DRY_RUN") ? s : solscanTx(s)))
-        .join("\n");
-      await ctx.reply(
-        [
-          result.success ? `✅ ${req.purpose} OK` : `❌ ${req.purpose} gagal`,
-          result.message || result.error || "",
-          sigLines ? `Sig:\n${sigLines}` : "",
-        ]
-          .filter(Boolean)
-          .join("\n"),
-        { reply_markup: mainMenuKeyboard() },
-      );
-      const repo = (req.payload as Record<string, unknown>).reposition as { bins?: number } | undefined;
-      if (result.success && req.purpose === "remove" && repo) {
-        resetSession(chatKey(ctx));
-        await openRepositionPanel(ctx, String(req.payload.pool), Number(repo.bins || 40));
-        return;
-      }
-    } catch (e) {
-      markConfirm(id, "failed", (e as Error).message);
-      await ctx.reply(`❌ ${redactSecrets((e as Error).message)}`, { reply_markup: mainMenuKeyboard() });
-    }
-    resetSession(chatKey(ctx));
+    await executeConfirmed(ctx, req);
   });
+
+  setConfirmRunner(executeConfirmed);
 
   registerAddPanel(bot);
   registerPositionsView(bot);
@@ -213,7 +191,7 @@ export function createBot(): Bot {
           pool_name: p.pool_name,
         },
       });
-      await ctx.editMessageText(`${summary}\n\nid=${req.id}`, { reply_markup: confirmKeyboard(req.id) });
+      await presentConfirm(ctx, `${summary}\n\nid=${req.id}`, req.id, { edit: true });
     } catch (e) {
       await ctx.reply(`❌ ${(e as Error).message}`);
     }
@@ -303,6 +281,39 @@ export function createBot(): Bot {
   });
 
   return bot;
+}
+
+
+async function executeConfirmed(ctx: Context, req: ConfirmRequest): Promise<void> {
+  const id = req.id;
+  markConfirm(id, "confirmed"); // prevents double execution (double tap / auto + tap)
+    try {
+      const result = await runConfirmedAction(req.purpose, req.payload);
+      markConfirm(id, result.success ? "executed" : "failed", result.message);
+      const sigLines = (result.signatures || [])
+        .map((s) => (s.startsWith("DRY_RUN") ? s : solscanTx(s)))
+        .join("\n");
+      await ctx.reply(
+        [
+          result.success ? `✅ ${req.purpose} OK` : `❌ ${req.purpose} gagal`,
+          result.message || result.error || "",
+          sigLines ? `Sig:\n${sigLines}` : "",
+        ]
+          .filter(Boolean)
+          .join("\n"),
+        { reply_markup: mainMenuKeyboard() },
+      );
+      const repo = (req.payload as Record<string, unknown>).reposition as { bins?: number } | undefined;
+      if (result.success && req.purpose === "remove" && repo) {
+        resetSession(chatKey(ctx));
+        await openRepositionPanel(ctx, String(req.payload.pool), Number(repo.bins || 40));
+        return;
+      }
+    } catch (e) {
+      markConfirm(id, "failed", (e as Error).message);
+      await ctx.reply(`❌ ${redactSecrets((e as Error).message)}`, { reply_markup: mainMenuKeyboard() });
+    }
+    resetSession(chatKey(ctx));
 }
 
 async function runConfirmedAction(
@@ -568,7 +579,7 @@ async function finishSwapAmount(ctx: Context, amtText: string): Promise<void> {
       },
     });
     resetSession(chatKey(ctx));
-    await ctx.reply(summary, { reply_markup: confirmKeyboard(req.id) });
+    await presentConfirm(ctx, summary, req.id);
   } catch (e) {
     await ctx.reply(`❌ Swap gagal: ${(e as Error).message}`, { reply_markup: mainMenuKeyboard() });
   }

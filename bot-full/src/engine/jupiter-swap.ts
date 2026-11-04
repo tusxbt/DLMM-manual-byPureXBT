@@ -8,6 +8,7 @@ import { getWalletPublicKey } from "./wallet.js";
 import type { PendingTxItem } from "./pending.js";
 import { log } from "../logger.js";
 import { jupiterSlippageBps } from "./slippage.js";
+import { jupiterPrioritization } from "./priority.js";
 
 const QUOTE_API = "https://quote-api.jup.ag/v6/quote";
 const SWAP_API = "https://quote-api.jup.ag/v6/swap";
@@ -73,6 +74,7 @@ export async function buildSwapTx(input: {
     userPublicKey,
     wrapAndUnwrapSol: input.wrapAndUnwrapSol !== false,
     dynamicComputeUnitLimit: true,
+    ...(jupiterPrioritization() ? { prioritizationFeeLamports: jupiterPrioritization() } : {}),
   };
   const res = await fetch(SWAP_API, { method: "POST", headers, body: JSON.stringify(body) });
   if (!res.ok) throw new Error(`Jupiter swap HTTP ${res.status}: ${(await res.text()).slice(0, 200)}`);

@@ -1,3 +1,4 @@
+import { presentConfirm } from "./confirm-ui.js";
 import { InlineKeyboard, Keyboard, type Bot, type Context } from "grammy";
 import { loadConfig, CONFIRM_TTL_MS, SOL_MINT } from "../config.js";
 import { fmtNum, fmtUsd, shortAddr } from "../format.js";
@@ -41,6 +42,7 @@ import {
   MAX_BINS_PER_POSITION,
 } from "./add-panel.js";
 import { PublicKey } from "@solana/web3.js";
+import { isAutoConfirm, setAutoConfirm, AUTO_BADGE } from "./confirm-ui.js";
 import { getConnection } from "../engine/connection.js";
 import { getWalletPublicKey } from "../engine/wallet.js";
 import { getUsdPrices } from "../engine/prices.js";
@@ -90,7 +92,7 @@ export async function renderAddPanel(ctx: Context, note?: string): Promise<void>
     liqSlippagePct: getLiqSlippagePct(),
     maxPositionUsd: cfg.maxPositionUsd,
     dryRun: cfg.dryRun,
-    note,
+    note: [isAutoConfirm() ? `${AUTO_BADGE} — 👀 Preview langsung deploy` : null, note].filter(Boolean).join("\n") || undefined,
   });
   s.data.panelMsgId = await upsert(
     ctx,
@@ -239,7 +241,7 @@ async function deployPanel(ctx: Context): Promise<void> {
       payload: { txs: built.txs, meta: built.meta, cost_usd: costUsd },
     });
     await renderAddPanel(ctx, "Preview dikirim ⬇️ (Cancel = panel tetap bisa diedit).");
-    await ctx.reply(summary, { reply_markup: confirmKeyboard(req.id) });
+    await presentConfirm(ctx, summary, req.id);
   } catch (e) {
     await renderAddPanel(ctx, `❌ ${redactSecrets((e as Error).message)}`);
   }
@@ -460,10 +462,12 @@ function settingsText(note?: string): string {
   const cfg = loadConfig({ requireTelegram: false, skipWallet: true });
   return [
     "⚙️ Settings",
+    st.autoConfirm ? `${AUTO_BADGE} — aksi langsung dieksekusi tanpa Confirm` : "🛡 Auto confirm OFF — setiap aksi butuh Confirm (60s)",
     "",
     `🎚 SWAP slippage: ${getSwapSlippagePct()}% (Jupiter bps = ×100)`,
     `🎚 LIQ slippage: ${getLiqSlippagePct()}% (Meteora %)`,
     `💵 Amount presets: ${st.amountPresets.join(", ")} SOL`,
+    `🚀 Priority fee: ${st.priorityFeeMicroLamports > 0 ? `${st.priorityFeeMicroLamports} µlamports/CU` : "auto (recent fees, 50k–2M µlamports/CU)"} · Jupiter maks ${st.jupPriorityMaxLamports} lamports`,
     `📏 Bin presets: Narrow ${st.binPresets.narrow} / Medium ${st.binPresets.medium} / Wide ${st.binPresets.wide} bins (maks 69)`,
     "",
     "🔒 Dari .env (ubah manual di server):",
@@ -478,6 +482,11 @@ function settingsText(note?: string): string {
 
 function settingsKb(): InlineKeyboard {
   return new InlineKeyboard()
+    .text(isAutoConfirm() ? "⚡ Auto confirm: ON" : "🛡 Auto confirm: OFF", "st:auto:toggle")
+    .row()
+    .text("✏️ Priority fee", "st:edit:prio")
+    .text("✏️ Jup max fee", "st:edit:jupmax")
+    .row()
     .text("✏️ SWAP slippage", "st:edit:swap")
     .row()
     .text("✏️ LIQ slippage", "st:edit:liq")
@@ -516,12 +525,41 @@ export function parseBinPresets(text: string): { narrow: number; medium: number;
 }
 
 export function registerSettingsPanel(bot: Bot): void {
+  bot.callbackQuery(/^st:auto:(toggle|on|off)$/, async (ctx) => {
+    await ctx.answerCallbackQuery();
+    const s = getSession(key(ctx));
+    s.data.settingsMsgId = ctx.callbackQuery.message?.message_id ?? s.data.settingsMsgId;
+    const a = ctx.match![1];
+    if (a === "toggle") {
+      if (isAutoConfirm()) {
+        setAutoConfirm(false);
+        return renderSettings(ctx, "Auto confirm OFF — Confirm/Cancel aktif lagi.");
+      }
+      const kb = new InlineKeyboard().text("⚡ Ya, aktifkan", "st:auto:on").text("❌ Batal", "st:back");
+      s.data.settingsMsgId = await upsert(
+        ctx,
+        s.data.settingsMsgId,
+        [
+          "⚠️ Aktifkan Auto confirm?",
+          "",
+          "Deploy, swap, claim, exit, reshape, zapout akan LANGSUNG dikirim on-chain setelah Preview/tombol — tanpa tombol Confirm.",
+          "Tetap berlaku: whitelist, MAX_POSITION_USD, MAX_SWAP_USD (zapout dikecualikan), DRY_RUN, cek signer.",
+          "Salah tekan = transaksi terkirim. Pakai hanya dengan wallet terpisah dana kecil.",
+        ].join("\n"),
+        kb,
+      );
+      return;
+    }
+    setAutoConfirm(a === "on");
+    await renderSettings(ctx, a === "on" ? `${AUTO_BADGE}.` : "Auto confirm OFF.");
+  });
+
   bot.callbackQuery("st:back", async (ctx) => {
     await ctx.answerCallbackQuery();
     getSession(key(ctx)).awaitingText = null;
     await renderSettings(ctx);
   });
-  bot.callbackQuery(/^st:edit:(swap|liq|presets|bins)$/, async (ctx) => {
+  bot.callbackQuery(/^st:edit:(swap|liq|presets|bins|prio|jupmax)$/, async (ctx) => {
     await ctx.answerCallbackQuery();
     const s = getSession(key(ctx));
     s.data.settingsMsgId = ctx.callbackQuery.message?.message_id ?? s.data.settingsMsgId;
@@ -530,6 +568,17 @@ export function registerSettingsPanel(bot: Bot): void {
     s.awaitingText = async (text) => {
       await deleteUserMsg(ctx);
       try {
+        if (f === "prio" || f === "jupmax") {
+          const raw = text.trim().toLowerCase();
+          const n = raw === "auto" ? 0 : Math.floor(Number(raw));
+          const max = f === "prio" ? 5_000_000 : 10_000_000;
+          if (!Number.isFinite(n) || n < 0 || n > max) return renderSettings(ctx, `Angka 0–${max}${f === "prio" ? " atau 'auto'" : ""}.`);
+          const st = loadSettings();
+          if (f === "prio") st.priorityFeeMicroLamports = n;
+          else st.jupPriorityMaxLamports = n;
+          saveSettings(st);
+          return renderSettings(ctx, "Tersimpan.");
+        }
         if (f === "bins") {
           const bp = parseBinPresets(text);
           if (!bp) return renderSettings(ctx, "Format: 3 angka bins 1–69 (narrow medium wide), contoh: 20 40 69");
@@ -555,7 +604,11 @@ export function registerSettingsPanel(bot: Bot): void {
       }
     };
     const prompt =
-      f === "bins"
+      f === "prio"
+        ? `Ketik priority fee DLMM dalam µlamports/CU (0 atau 'auto' = otomatis). Sekarang: ${loadSettings().priorityFeeMicroLamports || "auto"}`
+        : f === "jupmax"
+        ? `Ketik batas priority fee Jupiter per swap dalam lamports (0 = mati, 1000000 = 0.001 SOL). Sekarang: ${loadSettings().jupPriorityMaxLamports}`
+        : f === "bins"
         ? `Ketik 3 angka bins narrow medium wide (1–69). Sekarang: ${Object.values(loadSettings().binPresets).join(" ")}`
         : f === "presets"
         ? `Ketik amount presets SOL (contoh: 0.5 1 2). Sekarang: ${loadSettings().amountPresets.join(", ")}`
