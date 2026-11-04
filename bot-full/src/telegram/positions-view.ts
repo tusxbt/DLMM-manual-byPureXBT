@@ -201,9 +201,9 @@ async function editOrReply(ctx: Context, msgId: number | undefined, text: string
 }
 
 /** Single-message positions list. From a callback it edits that message; from a command it sends one. */
-export async function showPositionCards(ctx: Context, opts: { refetch?: boolean; page?: number } = {}): Promise<void> {
+export async function showPositionCards(ctx: Context, opts: { refetch?: boolean; page?: number; fresh?: boolean } = {}): Promise<void> {
   const s = getSession(key(ctx));
-  let msgId = ctx.callbackQuery?.message?.message_id;
+  let msgId = opts.fresh ? undefined : ctx.callbackQuery?.message?.message_id;
   try {
     let cards = s.data.posList as unknown as PositionCard[] | undefined;
     if (!cards || opts.refetch !== false) {

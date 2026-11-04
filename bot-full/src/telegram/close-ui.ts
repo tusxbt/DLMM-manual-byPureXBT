@@ -8,6 +8,7 @@ import crypto from "node:crypto";
 import { mainMenuKeyboard } from "./menus.js";
 import { redactSecrets, log } from "../logger.js";
 import { code } from "./html.js";
+import { showPositionCards } from "./positions-view.js";
 import { buildPnlCardPng, type PositionSnapshot } from "./pnl-send.js";
 
 const details = new Map<string, { short: string; full: string; at: number }>();
@@ -23,7 +24,7 @@ function remember(short: string, full: string): string {
 export function closeKb(detailId: string, expanded = false): InlineKeyboard {
   return new InlineKeyboard()
     .text(expanded ? "▲ Ringkas" : "ℹ️ Detail", `cl:${expanded ? "less" : "more"}:${detailId}`)
-    .text("📊 Positions", "pv:lref")
+    .text("📊 Positions", "cl:pos")
     .text("🏠", "menu:cancel");
 }
 
@@ -116,6 +117,10 @@ export async function finishClose(ctx: Context, msgId: number, o: CloseOutcome):
 }
 
 export function registerCloseUi(bot: Bot): void {
+  bot.callbackQuery("cl:pos", async (ctx) => {
+    await ctx.answerCallbackQuery();
+    await showPositionCards(ctx, { refetch: true, fresh: true }); // keep the result message intact
+  });
   bot.callbackQuery(/^cl:(more|less):([a-f0-9]+)$/, async (ctx) => {
     await ctx.answerCallbackQuery();
     const d = details.get(ctx.match![2]);
