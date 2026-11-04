@@ -229,7 +229,7 @@ async function deployPanel(ctx: Context): Promise<void> {
       c.clamped ? `⚠️ Custom harga dipotong ke ${MAX_BINS_PER_POSITION} bins.` : "",
       `Slippage: ${getLiqSlippagePct()}%`,
       `Perkiraan cost: ${fmtUsd(costUsd)} (cap ${fmtUsd(cfg.maxPositionUsd)})`,
-      `Position baru: ${shortAddr(built.position)}`,
+      `📍 Posisi baru \`${built.position}\``,
       cfg.dryRun ? "Mode: DRY_RUN (simulasi)" : "Mode: LIVE — akan ditandatangani & dikirim",
       `Konfirmasi dalam ${CONFIRM_TTL_MS / 1000}s.`,
     ]
@@ -238,7 +238,7 @@ async function deployPanel(ctx: Context): Promise<void> {
     const req = createConfirm({
       purpose: "add",
       summary,
-      payload: { txs: built.txs, meta: built.meta, cost_usd: costUsd },
+      payload: { txs: built.txs, meta: { ...built.meta, entry_price: p.activePrice ?? null }, cost_usd: costUsd },
     });
     await renderAddPanel(ctx, "Preview dikirim ⬇️ (Cancel = panel tetap bisa diedit).");
     await presentConfirm(ctx, summary, req.id);

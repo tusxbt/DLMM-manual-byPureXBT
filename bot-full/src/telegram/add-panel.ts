@@ -287,7 +287,7 @@ export function renderPanelText(
       : "✅ Siap — tekan 👀 Preview untuk konfirmasi.",
     pool && !hasToken(p) ? `💡 Token side / Double tidak tersedia — wallet belum memegang ${sym}.` : null,
     opts.note ? `ℹ️ ${opts.note}` : null,
-    pool ? `\nℹ️ Pool ${shortAddr(String(pool.pool), 6)}` : null,
+    pool ? `\n🏊 Pool \`${String(pool.pool)}\`` : null,
   ]
     .filter((x) => x !== null)
     .join("\n");

@@ -17,6 +17,12 @@ export type PoolHit = {
   token_y?: { symbol?: string; mint?: string };
 };
 
+/** datapi returns token_x/token_y objects {address,symbol}; older shape had mint_x + mint_x_symbol. */
+export function tokenInfo(obj: unknown, legacySymbol?: unknown, legacyMint?: unknown): { symbol: string; mint: string } {
+  const o = (obj && typeof obj === "object" ? obj : {}) as { address?: string; symbol?: string };
+  return { symbol: String(o.symbol || legacySymbol || ""), mint: String(o.address || legacyMint || "") };
+}
+
 export async function searchPools(query: string, limit = 8): Promise<PoolHit[]> {
   const url = `https://dlmm.datapi.meteora.ag/pools?query=${encodeURIComponent(query)}`;
   const res = await fetch(url);
@@ -33,14 +39,8 @@ export async function searchPools(query: string, limit = 8): Promise<PoolHit[]> 
       fee_pct: Number(poolConfig.base_fee_pct ?? p.base_fee_percentage ?? p.fee_pct ?? null) || null,
       tvl: Number(p.tvl ?? p.liquidity ?? null) || null,
       volume_24h: Number(volume.h24 ?? p.trade_volume_24h ?? null) || null,
-      token_x: {
-        symbol: String((p as { mint_x_symbol?: string }).mint_x_symbol || ""),
-        mint: String(p.mint_x || ""),
-      },
-      token_y: {
-        symbol: String((p as { mint_y_symbol?: string }).mint_y_symbol || ""),
-        mint: String(p.mint_y || ""),
-      },
+      token_x: tokenInfo(p.token_x, (p as { mint_x_symbol?: string }).mint_x_symbol, p.mint_x),
+      token_y: tokenInfo(p.token_y, (p as { mint_y_symbol?: string }).mint_y_symbol, p.mint_y),
     };
   });
   mapped.sort((a, b) => {

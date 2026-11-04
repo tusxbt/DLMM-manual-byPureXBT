@@ -1,3 +1,4 @@
+import { snapshotOf } from "./pnl-send.js";
 import { presentConfirm } from "./confirm-ui.js";
 import { InlineKeyboard, type Context } from "grammy";
 import { loadConfig, CONFIRM_TTL_MS } from "../config.js";
@@ -84,6 +85,7 @@ export async function onZapoutPos(ctx: Context, index: number): Promise<void> {
         position: analysis.position,
         pool_name: analysis.poolName || "",
         analysis,
+        snapshot: snapshotOf(p as Record<string, unknown>),
       },
     });
     resetSession(chatKey(ctx));

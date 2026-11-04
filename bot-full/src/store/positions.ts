@@ -13,6 +13,8 @@ export type TrackedPosition = {
   opened_at?: string;
   alerted?: boolean;
   cost_usd?: number;
+  /** active price (SOL per token) at deploy, for PnL card entry marker */
+  entry_price?: number;
 };
 
 type FileShape = { positions: TrackedPosition[] };

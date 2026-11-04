@@ -1,3 +1,4 @@
+import { sendPnlCard, snapshotOf } from "./pnl-send.js";
 import { presentConfirm, isAutoConfirm, AUTO_BADGE } from "./confirm-ui.js";
 /**
  * Positions view: one card message per DLMM position, edit-in-place refresh,
@@ -59,7 +60,7 @@ export function kstTime(d = new Date()): string {
   return d.toLocaleTimeString("en-GB", { timeZone: "Asia/Seoul", hour12: false });
 }
 
-export type PositionCard = LivePosition & { pair?: string; pool_name?: string; opened_at?: string; cost_usd?: number };
+export type PositionCard = LivePosition & { pair?: string; pool_name?: string; entry_price?: number; opened_at?: string; cost_usd?: number };
 
 export function renderPositionCard(p: PositionCard, now = new Date()): string {
   const pair = p.pair || "TOKEN/SOL";
@@ -68,7 +69,7 @@ export function renderPositionCard(p: PositionCard, now = new Date()): string {
       ? "📈 PnL n/a (deposit USD tidak tercatat)"
       : `${p.pnl_usd >= 0 ? "📈 +" : "📉 −"}$${Math.abs(p.pnl_usd).toFixed(2)} (${p.pnl_pct >= 0 ? "+" : "−"}${Math.abs(p.pnl_pct).toFixed(2)}%)`;
   const lines = [
-    `${pair} ${shortAddr(p.position)} [DLMM]`,
+    `**${pair}** · ${shortAddr(p.position)} [DLMM]`,
     "",
     `📊 Value: ${usdOrNa(p.total_value_usd)}`,
     pnl,
@@ -87,7 +88,9 @@ export function renderPositionCard(p: PositionCard, now = new Date()): string {
   lines.push("");
   const age = fmtAge(p.opened_at, now.getTime());
   lines.push(`🕐 ${age ?? "umur n/a"} · updated ${kstTime(now)} (KST)`);
-  lines.push(`https://app.meteora.ag/dlmm/${p.pool}`);
+  lines.push(`📍 Pos  \`${p.position}\``);
+  lines.push(`🏊 Pool \`${p.pool}\``);
+  lines.push(`[🔗 Meteora](https://app.meteora.ag/dlmm/${p.pool}) · [Solscan](https://solscan.io/account/${p.position})`);
   return lines.join("\n");
 }
 
@@ -100,9 +103,10 @@ export function positionKeyboard(i: number): InlineKeyboard {
     .text("♻️ Reposition", `pv:repo:${i}`)
     .row()
     .text("🔀 Flip", `pv:flip:${i}`)
-    .text("🔄 Refresh", `pv:ref:${i}`)
+    .text("📈 Card", `pv:card:${i}`)
     .row()
-    .text("← Positions", "pv:list");
+    .text("← Positions", "pv:list")
+    .text("🔄 Refresh", `pv:ref:${i}`);
 }
 
 const pairCache = new Map<string, string>();
@@ -132,6 +136,7 @@ async function loadCards(): Promise<PositionCard[]> {
       pool_name: t?.pool_name,
       opened_at: t?.opened_at,
       cost_usd: t?.cost_usd,
+      entry_price: t?.entry_price,
       pair: await pairName(p.pool, t?.pool_name || undefined),
     } as PositionCard);
   }
@@ -220,7 +225,8 @@ function confirmFor(kind: "claim" | "remove", p: PositionCard, reposition: boole
   const width = (p.max_bin ?? 0) - (p.min_bin ?? 0) + 1;
   const summary = [
     kind === "claim" ? "💰 Claim fees" : reposition ? "♻️ Reposition — langkah 1: Exit (remove 100% + close)" : "🚪 Exit (remove 100% + close)",
-    `Pool: ${p.pair} · Pos ${shortAddr(p.position)}`,
+    `Pool: **${p.pair}**`,
+    `Pos: \`${p.position}\``,
     `Value ${usdOrNa(p.total_value_usd)} | fees ${usdOrNa(p.unclaimed_fees_usd)}`,
     reposition ? `Langkah 2: panel Add terbuka dengan ${Math.min(width, 69)} bins di sekitar harga sekarang (perlu Preview + Confirm lagi).` : "",
     cfg.dryRun ? "Mode: DRY_RUN" : "Mode: LIVE",
@@ -235,6 +241,7 @@ function confirmFor(kind: "claim" | "remove", p: PositionCard, reposition: boole
       pool: p.pool,
       position: p.position,
       pool_name: p.pool_name,
+      snapshot: kind === "remove" ? snapshotOf(p as unknown as Record<string, unknown>) : undefined,
       ...(reposition ? { reposition: { bins: Math.max(1, Math.min(69, width)) } } : {}),
     },
   });
@@ -263,7 +270,7 @@ export function registerPositionsView(bot: Bot): void {
     await editOrReply(ctx, ctx.callbackQuery.message?.message_id, renderPositionCard(p), positionKeyboard(i));
   });
 
-  bot.callbackQuery(/^pv:(exit|claim|zap|repo|flip|ref):(\d+)$/, async (ctx) => {
+  bot.callbackQuery(/^pv:(exit|claim|zap|repo|flip|ref|card):(\d+)$/, async (ctx) => {
     const action = ctx.match![1];
     const i = Number(ctx.match![2]);
     const s = getSession(key(ctx));
@@ -293,6 +300,11 @@ export function registerPositionsView(bot: Bot): void {
       } catch (e) {
         await ctx.reply(`❌ ${redactSecrets((e as Error).message)}`);
       }
+      return;
+    }
+    if (action === "card") {
+      await ctx.answerCallbackQuery({ text: "Membuat PnL card…" });
+      await sendPnlCard(ctx, snapshotOf(p as unknown as Record<string, unknown>), false);
       return;
     }
     await ctx.answerCallbackQuery();

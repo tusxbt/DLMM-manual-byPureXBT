@@ -2,7 +2,9 @@ import { presentConfirm, setConfirmRunner } from "./confirm-ui.js";
 import type { ConfirmRequest } from "../engine/confirm.js";
 import { Bot, InlineKeyboard, type Context } from "grammy";
 import { loadConfig, CONFIRM_TTL_MS } from "../config.js";
-import { fmtNum, fmtUsd, shortAddr, strategyLabel, solscanTx } from "../format.js";
+import { fmtNum, fmtUsd, shortAddr, strategyLabel } from "../format.js";
+import { installHtml, sigLine } from "./html.js";
+import { sendPnlCard, type PositionSnapshot } from "./pnl-send.js";
 import { log, redactSecrets } from "../logger.js";
 import { isAuthorized } from "./auth.js";
 import { getSession, resetSession } from "./session.js";
@@ -45,13 +47,16 @@ function chatKey(ctx: Context): string {
 async function replyMenu(ctx: Context, text?: string): Promise<void> {
   resetSession(chatKey(ctx));
   const cfg = loadConfig({ requireTelegram: false, skipWallet: true });
-  const mode = cfg.dryRun ? "🧪 DRY_RUN (simulasi)" : "⚠️ LIVE (kirim on-chain)";
-  await ctx.reply(text || `DLMM Bot Full — ${mode}\nPilih aksi:`, { reply_markup: mainMenuKeyboard() });
+  const mode = cfg.dryRun ? "🧪 DRY_RUN (simulasi)" : "⚠️ LIVE (on-chain)";
+  await ctx.reply(text || `🏠 **DLMM Bot**\n${mode}\n\nPaste CA token untuk buka posisi, atau pilih aksi:`, {
+    reply_markup: mainMenuKeyboard(),
+  });
 }
 
 export function createBot(): Bot {
   const cfg = loadConfig();
   const bot = new Bot(cfg.telegramToken);
+  installHtml(bot); // all messages → HTML, `code` = tap-to-copy
 
   bot.use(async (ctx, next) => {
     if (!ctx.chat) return;
@@ -177,7 +182,7 @@ export function createBot(): Bot {
       const summary = [
         kind === "claim" ? "Claim fees" : "Remove 100% + close",
         `Pool: ${p.pool_name || shortAddr(String(p.pool))}`,
-        `Pos: ${shortAddr(String(p.position))}`,
+        `Pos: \`${String(p.position)}\``,
         `Nilai ${fmtUsd(Number(p.total_value_usd))} | fees ${fmtUsd(Number(p.unclaimed_fees_usd))}`,
         cfg.dryRun ? "Mode: DRY_RUN" : "Mode: LIVE",
         `Konfirmasi dalam ${CONFIRM_TTL_MS / 1000}s.`,
@@ -284,6 +289,15 @@ export function createBot(): Bot {
 }
 
 
+const PURPOSE_LABEL: Record<string, string> = {
+  add: "🚀 Deploy",
+  remove: "🚪 Exit",
+  claim: "💰 Claim",
+  swap: "💱 Swap",
+  reshape: "🔀 Flip",
+  zapout: "⚡ Zapout",
+};
+
 async function executeConfirmed(ctx: Context, req: ConfirmRequest): Promise<void> {
   const id = req.id;
   markConfirm(id, "confirmed"); // prevents double execution (double tap / auto + tap)
@@ -291,18 +305,23 @@ async function executeConfirmed(ctx: Context, req: ConfirmRequest): Promise<void
       const result = await runConfirmedAction(req.purpose, req.payload);
       markConfirm(id, result.success ? "executed" : "failed", result.message);
       const sigLines = (result.signatures || [])
-        .map((s) => (s.startsWith("DRY_RUN") ? s : solscanTx(s)))
+        .map((s) => sigLine(s))
         .join("\n");
       await ctx.reply(
         [
-          result.success ? `✅ ${req.purpose} OK` : `❌ ${req.purpose} gagal`,
+          result.success ? `✅ **${PURPOSE_LABEL[req.purpose] ?? req.purpose} berhasil**` : `❌ **${PURPOSE_LABEL[req.purpose] ?? req.purpose} gagal**`,
+          "",
           result.message || result.error || "",
-          sigLines ? `Sig:\n${sigLines}` : "",
+          sigLines ? `\n🧾 Tx:\n${sigLines}` : "",
         ]
           .filter(Boolean)
           .join("\n"),
         { reply_markup: mainMenuKeyboard() },
       );
+      const snap = (req.payload as Record<string, unknown>).snapshot as PositionSnapshot | undefined;
+      if (result.success && (req.purpose === "remove" || req.purpose === "zapout") && snap && !String(result.signatures?.[0] ?? "").startsWith("DRY_RUN")) {
+        void sendPnlCard(ctx, snap, true); // best-effort, never blocks close
+      }
       const repo = (req.payload as Record<string, unknown>).reposition as { bins?: number } | undefined;
       if (result.success && req.purpose === "remove" && repo) {
         resetSession(chatKey(ctx));
@@ -337,6 +356,7 @@ async function runConfirmedAction(
         max_bin: Number(meta.max_bin || 0),
         opened_at: new Date().toISOString(),
         cost_usd: costUsd,
+        entry_price: Number(meta.entry_price) || undefined,
       });
     } else if (result.success && result.dryRun) {
       addTrackedPosition({
@@ -349,12 +369,13 @@ async function runConfirmedAction(
         max_bin: Number(meta.max_bin || 0),
         opened_at: new Date().toISOString(),
         cost_usd: costUsd,
+        entry_price: Number(meta.entry_price) || undefined,
       });
     }
     return {
       success: result.success,
       signatures: result.signatures,
-      message: result.message || (result.success ? `Position ${shortAddr(String(meta.position))}` : result.error),
+      message: result.message || (result.success ? `📍 Posisi \`${String(meta.position)}\`` : result.error),
       error: result.error,
     };
   }
@@ -450,7 +471,7 @@ async function doPools(ctx: Context, query: string, forAdd = false): Promise<voi
     }
     const lines = pools.map(
       (p, i) =>
-        `${i + 1}. ${p.name}\n   ${shortAddr(p.pool)} | step ${p.bin_step} | fee ${fmtNum(p.fee_pct, 2)}% | TVL ${fmtUsd(p.tvl)}`,
+        `${i + 1}. **${p.name}**\n   \`${p.pool}\`\n   step ${p.bin_step} · fee ${fmtNum(p.fee_pct, 2)}% · TVL ${fmtUsd(p.tvl)}`,
     );
     await ctx.reply([`🔍 Pools untuk “${query}”:`, ...lines].join("\n\n"), {
       reply_markup: mainMenuKeyboard(),
@@ -504,19 +525,29 @@ async function startRemove(ctx: Context): Promise<void> {
 }
 
 async function showBalance(ctx: Context): Promise<void> {
-  const solUsd = await getSolUsd();
+  let solUsd = 0;
+  try {
+    solUsd = await getSolUsd();
+  } catch {
+    /* show amounts without USD */
+  }
   const b = await getBalances(solUsd);
   const cfg = loadConfig({ requireTelegram: false, skipWallet: true });
+  const u = (x: number) => (solUsd ? fmtUsd(x) : "n/a");
   await ctx.reply(
     [
-      `💰 Wallet ${shortAddr(b.wallet)}`,
-      `SOL: ${fmtNum(b.sol)} (${fmtUsd(b.sol_usd)})`,
-      `USDC: ${fmtNum(b.usdc)} (${fmtUsd(b.usdc_usd)})`,
-      `Total ≈ ${fmtUsd(b.total_usd)}`,
-      `Mode: ${cfg.dryRun ? "DRY_RUN" : "LIVE"} | cap pos ${fmtUsd(cfg.maxPositionUsd)} / swap ${fmtUsd(cfg.maxSwapUsd)}`,
+      "👛 **Wallet**",
+      `\`${b.wallet}\``,
+      "",
+      `◎ SOL    ${fmtNum(b.sol)}  ·  ${u(b.sol_usd)}`,
+      `💲 USDC  ${fmtNum(b.usdc)}  ·  ${fmtUsd(b.usdc_usd)}`,
+      `Σ Total  ${solUsd ? fmtUsd(b.total_usd) : "n/a"}`,
+      "",
+      `${cfg.dryRun ? "🧪 DRY_RUN" : "⚠️ LIVE"}  ·  cap posisi ${fmtUsd(cfg.maxPositionUsd)}  ·  swap ${fmtUsd(cfg.maxSwapUsd)}`,
+      `[🔗 Solscan](https://solscan.io/account/${b.wallet})`,
       b.error ? `⚠️ ${b.error}` : null,
     ]
-      .filter(Boolean)
+      .filter((x) => x !== null)
       .join("\n"),
     { reply_markup: mainMenuKeyboard() },
   );
@@ -565,7 +596,8 @@ async function finishSwapAmount(ctx: Context, amtText: string): Promise<void> {
 
     const summary = [
       "Konfirmasi Swap:",
-      `${shortAddr(quote.inputMint)} → ${shortAddr(quote.outputMint)}`,
+      `In   \`${quote.inputMint}\``,
+      `Out  \`${quote.outputMint}\``,
       `UI in: ${fmtNum(amt)} | atomic in: ${quote.inAmount}`,
       `Est out: ${quote.outAmount}`,
       `Est USD: ${fmtUsd(usdEstimate)} (cap ${fmtUsd(cfg.maxSwapUsd)})`,

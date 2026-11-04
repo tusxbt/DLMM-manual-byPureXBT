@@ -31,7 +31,7 @@ test("card: PnL n/a when cost unknown; real when known", () => {
     min_price: 0.00000116, max_price: 0.00000425, active_price: 0.00000414,
   };
   const t = renderPositionCard(base as never, new Date("2026-11-04T04:25:48Z"));
-  assert.match(t, /BONK\/SOL Pos1…1111 \[DLMM\]|BONK\/SOL .* \[DLMM\]/);
+  assert.match(t, /\*\*BONK\/SOL\*\* · .* \[DLMM\]/);
   assert.match(t, /PnL n\/a/);
   assert.match(t, /0\.0₅116–0\.0₅425 \(now 0\.0₅414\)/);
   assert.match(t, /🟢 In-range/);
