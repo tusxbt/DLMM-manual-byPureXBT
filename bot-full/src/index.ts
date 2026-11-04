@@ -17,8 +17,9 @@ log(
 );
 
 import { startTpslMonitor } from "./telegram/tpsl-ui.js";
+import { runAutoZapout } from "./telegram/bot.js";
 const bot = createBot();
-startTpslMonitor(bot); // alerts only, never trades
+startTpslMonitor(bot, runAutoZapout); // 15s loop only while some TP/SL exists; auto zapout only when toggled ON
 
 bot.api
   .setMyCommands(BOT_COMMANDS)

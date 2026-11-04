@@ -8,7 +8,7 @@ import { Bot, InlineKeyboard, type Context } from "grammy";
 import { loadConfig, CONFIRM_TTL_MS } from "../config.js";
 import { fmtNum, fmtUsd, shortAddr, strategyLabel } from "../format.js";
 import { installHtml, sigLine } from "./html.js";
-import { type PositionSnapshot } from "./pnl-send.js";
+import { type PositionSnapshot, snapshotOf } from "./pnl-send.js";
 import { setStatus, finishClose, closeTitle, registerCloseUi, type CloseOutcome } from "./close-ui.js";
 import { log, redactSecrets } from "../logger.js";
 import { roleFor } from "./auth.js";
@@ -389,7 +389,7 @@ async function computeRealized(sigs: string[], snap?: PositionSnapshot): Promise
   return { ...r, ...realizedUsd(r, solUsd, prices, deposit) };
 }
 
-async function runClose(ctx: Context, req: ConfirmRequest, statusMsgId?: number): Promise<void> {
+async function runClose(ctx: Context, req: ConfirmRequest, statusMsgId?: number): Promise<CloseOutcome> {
   const id = req.id;
   const kind = req.purpose as "remove" | "zapout";
   const snap = (req.payload as Record<string, unknown>).snapshot as PositionSnapshot | undefined;
@@ -421,6 +421,58 @@ async function runClose(ctx: Context, req: ConfirmRequest, statusMsgId?: number)
   if (outcome.success && kind === "remove" && repo) {
     await openRepositionPanel(ctx, String(req.payload.pool), Number(repo.bins || 40));
   }
+  return outcome;
+}
+
+/** In-flight auto zapouts (per position) — prevents double execution across ticks/users. */
+const autoLocks = new Set<string>();
+export const isAutoLocked = (position: string) => autoLocks.has(position);
+
+/**
+ * Auto zapout (TP/SL with 🤖 ON): same executor path as manual zapout, signed with the user's
+ * server-side wallet (caller must be inside runAsUser). Retries once; on failure DMs manual buttons.
+ * Swaps above MAX_SWAP_USD are skipped (tokens stay in wallet).
+ */
+export async function runAutoZapout(api: Bot["api"], chatId: string, p: { position: string; pool: string; pool_name?: string; pair?: string }, why: string): Promise<boolean> {
+  if (autoLocks.has(p.position)) return false;
+  autoLocks.add(p.position);
+  const ctx = {
+    chat: { id: Number(chatId) },
+    api,
+    reply: (t: string, o?: Record<string, unknown>) => api.sendMessage(chatId, t, o as never),
+    replyWithPhoto: (f: unknown, o?: Record<string, unknown>) => api.sendPhoto(chatId, f as never, o as never),
+  } as unknown as Context;
+  try {
+    const status = await api.sendMessage(chatId, `🤖 Auto zapout — ${why}\n⏳ ${p.pair || p.pool_name || p.position.slice(0, 6)}…`);
+    let snap: PositionSnapshot | undefined;
+    try {
+      const r = await resolvePosition(ctx, p.position, true);
+      if (r) snap = snapshotOf(r.p as unknown as Record<string, unknown>);
+    } catch {
+      /* snapshot optional */
+    }
+    for (let attempt = 1; attempt <= 2; attempt++) {
+      clearCardsCache();
+      const req = createConfirm({ purpose: "zapout", summary: "auto", payload: { pool: p.pool, position: p.position, pool_name: p.pool_name || "", snapshot: snap, auto: true } });
+      markConfirm(req.id, "confirmed");
+      const out = await runClose(ctx, req, attempt === 1 ? status.message_id : undefined);
+      if (out.success) return true;
+      const still = await resolvePosition(ctx, p.position, true).catch(() => null);
+      if (!still) return true; // closed by the first attempt (e.g. only swap failed)
+      if (attempt === 1) await api.sendMessage(chatId, "🔁 Auto zapout gagal — mencoba sekali lagi…");
+    }
+    await api.sendMessage(chatId, `❌ Auto zapout gagal 2x — posisi masih terbuka. Aksi manual:`, {
+      reply_markup: new InlineKeyboard().text("🚪 Exit", `pv:exit:${p.position}`).text("⚡ Zapout", `pv:zap:${p.position}`),
+    });
+    return false;
+  } catch (e) {
+    await api.sendMessage(chatId, `❌ Auto zapout error: ${redactSecrets((e as Error).message)}`, {
+      reply_markup: new InlineKeyboard().text("🚪 Exit", `pv:exit:${p.position}`).text("⚡ Zapout", `pv:zap:${p.position}`),
+    }).catch(() => undefined);
+    return false;
+  } finally {
+    autoLocks.delete(p.position);
+  }
 }
 
 /** Result replaces the status/preview message in place (falls back to a new message). */
@@ -440,7 +492,10 @@ async function executeConfirmed(ctx: Context, req: ConfirmRequest, statusMsgId?:
   const id = req.id;
   markConfirm(id, "confirmed"); // prevents double execution (double tap / auto + tap)
   clearCardsCache(); // positions change after any action
-  if (req.purpose === "remove" || req.purpose === "zapout") return runClose(ctx, req, statusMsgId);
+  if (req.purpose === "remove" || req.purpose === "zapout") {
+    await runClose(ctx, req, statusMsgId);
+    return;
+  }
     let progMsg = statusMsgId ?? ctx.callbackQuery?.message?.message_id;
     try {
       const result = await runConfirmedAction(req.purpose, req.payload, {
@@ -607,6 +662,7 @@ async function runConfirmedAction(
       positionAddress: String(payload.position),
       poolName: String(payload.pool_name || ""),
       analysis: payload.analysis as never,
+      capSwap: payload.auto === true,
       onStage: hooks.onStage,
       onProgress: hooks.onProgress,
     });

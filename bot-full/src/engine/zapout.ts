@@ -137,6 +137,8 @@ export async function executeZapout(input: {
   poolName?: string;
   analysis?: ZapoutAnalysis;
   onStage?: (stage: "close" | "swap") => void | Promise<void>;
+  /** Auto zapout: never swap a token whose value > MAX_SWAP_USD (or unknown) — keep it in wallet. */
+  capSwap?: boolean;
   onProgress?: (done: number, total: number, label: string) => void | Promise<void>;
 }): Promise<ZapoutExecResult> {
   const cfg = loadConfig({ requireTelegram: false });
@@ -270,7 +272,20 @@ export async function executeZapout(input: {
   const tQuote = Date.now();
   const balAfter = await Promise.all(swapMints.map((m) => getTokenBalanceAtomic(m, user)));
   const deltas = swapMints.map((m, i) => ({ mint: m, delta: balAfter[i] - (balBefore[i] as bigint) }));
-  const todo = deltas.filter((d) => d.delta > 0n);
+  let todo = deltas.filter((d) => d.delta > 0n);
+  if (input.capSwap && todo.length) {
+    const px = await getUsdPrices(todo.map((d) => d.mint)).catch(() => ({}) as Record<string, number>);
+    const keep: string[] = [];
+    const ok: typeof todo = [];
+    for (const d of todo) {
+      const dec = await getMintDecimals(d.mint).catch(() => 9);
+      const usd = (Number(d.delta) / 10 ** dec) * ((px as Record<string, number>)[d.mint] ?? NaN);
+      if (Number.isFinite(usd) && usd <= cfg.maxSwapUsd) ok.push(d);
+      else keep.push(`${d.mint.slice(0, 4)}… ${Number.isFinite(usd) ? `$${usd.toFixed(2)}` : "harga n/a"}`);
+    }
+    if (keep.length) steps.push({ step: "swap_cap", ok: true, detail: `Swap dilewati (> MAX_SWAP_USD=${cfg.maxSwapUsd}), token tetap di wallet: ${keep.join(", ")}` });
+    todo = ok;
+  }
   if (!todo.length) {
     steps.push({ step: "swap", ok: true, detail: "Tidak ada token non-SOL untuk di-swap (delta ≤ 0)." });
     lap("total", t0);

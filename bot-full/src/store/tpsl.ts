@@ -3,7 +3,7 @@ import path from "node:path";
 import { loadConfig } from "../config.js";
 import { readJson, writeJsonAtomic } from "./jsonStore.js";
 
-export type TpslEntry = { tp?: number | null; sl?: number | null; firedTp?: boolean; firedSl?: boolean; pool?: string; pair?: string };
+export type TpslEntry = { tp?: number | null; sl?: number | null; firedTp?: boolean; firedSl?: boolean; pool?: string; pair?: string; pool_name?: string; auto?: boolean };
 type File = Record<string, TpslEntry>;
 
 const file = () => path.join(loadConfig({ requireTelegram: false, skipWallet: true }).dataDir, "tpsl.json");
@@ -33,6 +33,15 @@ export function setTpsl(position: string, patch: { tp?: number | null; sl?: numb
   writeJsonAtomic(file(), all);
   return e;
 }
+/** Auto zapout toggle (kept only while a TP or SL exists). */
+export function setAuto(position: string, on: boolean): boolean {
+  const all = loadTpsl();
+  if (!all[position] || (all[position].tp == null && all[position].sl == null)) return false;
+  all[position].auto = on;
+  writeJsonAtomic(file(), all);
+  return true;
+}
+
 export function markFired(position: string, side: "tp" | "sl"): void {
   const all = loadTpsl();
   if (!all[position]) return;
@@ -61,5 +70,6 @@ export function tpslLine(e: TpslEntry | null): string | null {
   const parts = [];
   if (e.tp != null) parts.push(`TP ${fmtPct(e.tp)}${e.firedTp ? " ✓" : ""}`);
   if (e.sl != null) parts.push(`SL ${fmtPct(e.sl)}${e.firedSl ? " ✓" : ""}`);
+  if (parts.length && e.auto) parts.push("🤖 auto zapout");
   return parts.length ? `🎯 ${parts.join(" · ")}` : null;
 }
