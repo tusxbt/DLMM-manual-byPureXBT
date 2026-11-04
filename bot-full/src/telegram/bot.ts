@@ -26,7 +26,8 @@ import { buildAddLiquidityTxs, buildClaimFeeTxs, buildRemoveAndCloseTxs, binsFro
 import { getBalances } from "../engine/connection.js";
 import { getSolUsd, getUsdPrices } from "../engine/prices.js";
 import { createConfirm, takeAwaiting, markConfirm, cancelConfirm, renewConfirm, expiredAction } from "../engine/confirm.js";
-import { resolvePosition, clearCardsCache, showFlipPreview } from "./positions-view.js";
+import { resolvePosition, clearCardsCache, showFlipPreview, showClaimSellPreview } from "./positions-view.js";
+import { executeClaimSell } from "../engine/claim-sell.js";
 import { executeFlip } from "../engine/flip.js";
 import { registerTpslUi } from "./tpsl-ui.js";
 import { assertUsdCap, executePendingTxs } from "../engine/executor.js";
@@ -195,6 +196,11 @@ export function createBot(): Bot {
         await ctx.editMessageText("⏰ Waktu habis — menyiapkan konfirmasi baru…");
         return onZapoutPos(ctx, r.index);
       }
+      if (fresh.kind === "claimsell") {
+        const r = await resolvePosition(ctx, fresh.position).catch(() => null);
+        if (!r) return void (await ctx.editMessageText("Posisi sudah tertutup."));
+        return showClaimSellPreview(ctx, r.p);
+      }
       if (fresh.kind === "flip") {
         const r = await resolvePosition(ctx, fresh.position).catch(() => null);
         if (!r) return void (await ctx.editMessageText("Posisi sudah tertutup."));
@@ -361,6 +367,7 @@ const PURPOSE_LABEL: Record<string, string> = {
   swap: "💱 Swap",
   reshape: "🆕 Reshape",
   flip: "🔀 Flip",
+  claimsell: "💱 Claim+Sell",
   zapout: "⚡ Zapout",
 };
 
@@ -566,6 +573,10 @@ async function runConfirmedAction(
       message: result.message || `in=${payload.inAmount} out≈${payload.outAmount}`,
       error: result.error,
     };
+  }
+
+  if (purpose === "claimsell") {
+    return executeClaimSell(payload.quote as never);
   }
 
   if (purpose === "flip") {

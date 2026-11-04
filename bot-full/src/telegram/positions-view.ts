@@ -15,6 +15,7 @@ import { loadConfig, CONFIRM_TTL_MS } from "../config.js";
 import { fmtUsd, shortAddr, strategyLabel } from "../format.js";
 import { redactSecrets } from "../logger.js";
 import { code } from "./html.js";
+import { quoteClaimSell, type ClaimSellQuote } from "../engine/claim-sell.js";
 import { getTpsl, tpslLine } from "../store/tpsl.js";
 import { getSession } from "./session.js";
 import { confirmKeyboard, mainMenuKeyboard } from "./menus.js";
@@ -413,7 +414,64 @@ export async function showFlipPreview(ctx: Context, p: PositionCard): Promise<vo
   await edit([pv.text, cfg.dryRun ? "Mode: DRY_RUN" : "Mode: LIVE", `Konfirmasi dalam ${CONFIRM_TTL_MS / 1000}s.`].join("\n"), kb);
 }
 
+export function claimMenu(p: { position: string; pair?: string; unclaimed_fees_usd?: number | null }): { text: string; kb: InlineKeyboard } {
+  const a = p.position;
+  return {
+    text: [`💰 **Claim fees** — ${p.pair || "posisi"} · ${usdOrNa(p.unclaimed_fees_usd)}`, "💼 Keep token — claim saja", "💱 Sell ke SOL — claim, lalu jual HANYA token fee yang di-claim ke SOL (Jupiter)"].join("\n"),
+    kb: new InlineKeyboard().text("💼 Keep token", `pv:ck:${a}`).text("💱 Sell ke SOL", `pv:cs:${a}`).row().text("⬅️ Kembali", `pv:open:${a}`),
+  };
+}
+
+export function renderClaimSellPreview(q: ClaimSellQuote, pair?: string): { text: string; blocked: boolean } {
+  const L = [`💱 **Claim + Sell ke SOL** — ${pair || shortAddr(q.pool)} · ${code(shortAddr(q.position))}`];
+  L.push(`Fee token: ${q.feeTokenUi.toPrecision(6)} (${fmtUsd(q.tokenUsd)}) · fee SOL: ${q.feeSolUi.toFixed(6)}`);
+  if (q.feeTokenUi <= 0) {
+    L.push("Tidak ada fee token untuk dijual — pakai 💼 Keep token.");
+    return { text: L.join("\n"), blocked: true };
+  }
+  if (q.overCap) {
+    L.push(`⛔ ${fmtUsd(q.tokenUsd)} > MAX_SWAP_USD ${fmtUsd(q.capUsd)} — swap ditolak. Pakai 💼 Keep token.`);
+    return { text: L.join("\n"), blocked: true };
+  }
+  L.push(q.estSolOut != null ? `Est. keluar: ≈${q.estSolOut.toFixed(6)} SOL (+ fee SOL ${q.feeSolUi.toFixed(6)})` : `⚠️ Quote Jupiter gagal${q.quoteError ? `: ${q.quoteError.slice(0, 80)}` : ""} — dicoba lagi saat Confirm`);
+  L.push("Jumlah jual = delta token hasil claim (bukan saldo wallet).");
+  return { text: L.join("\n"), blocked: false };
+}
+
+async function editHere(ctx: Context, text: string, kb: InlineKeyboard): Promise<void> {
+  if (await dropPhoto(ctx)) return void (await ctx.reply(text, { reply_markup: kb }));
+  await ctx.editMessageText(text, { reply_markup: kb }).catch(async (e) => {
+    if (!/not modified/i.test(String((e as Error).message))) await ctx.reply(text, { reply_markup: kb });
+  });
+}
+
+export async function showClaimSellPreview(ctx: Context, p: PositionCard): Promise<void> {
+  const back = new InlineKeyboard().text("⬅️ Kembali", `pv:claim:${p.position}`);
+  await editHere(ctx, "⏳ Cek fee + quote Jupiter…", back);
+  let q: ClaimSellQuote;
+  try {
+    q = await quoteClaimSell(String(p.pool), p.position);
+  } catch (e) {
+    return editHere(ctx, `❌ ${redactSecrets((e as Error).message)}`, back);
+  }
+  const pv = renderClaimSellPreview(q, p.pair);
+  if (pv.blocked) return editHere(ctx, pv.text, back);
+  const cfg = loadConfig({ requireTelegram: false, skipWallet: true });
+  const req = createConfirm({ purpose: "claimsell", summary: pv.text, payload: { position: p.position, pool: String(p.pool), quote: q } });
+  const kb = new InlineKeyboard().text("✅ Confirm", `confirm:yes:${req.id}`).text("❌ Cancel", `confirm:no:${req.id}`).row().text("⬅️ Kembali", `pv:claim:${p.position}`);
+  await editHere(ctx, [pv.text, `${cfg.dryRun ? "🧪 DRY_RUN" : "⚠️ LIVE"} · konfirmasi ${CONFIRM_TTL_MS / 1000}s`].join("\n"), kb);
+}
+
 export function registerPositionsView(bot: Bot): void {
+  bot.callbackQuery(/^pv:(ck|cs):([1-9A-HJ-NP-Za-km-z]{32,44})$/, async (ctx) => {
+    await ctx.answerCallbackQuery();
+    const r = await resolvePosition(ctx, ctx.match![2]).catch(() => null);
+    if (!r) return void (await ctx.reply("Posisi sudah tertutup."));
+    if (ctx.match![1] === "cs") return showClaimSellPreview(ctx, r.p);
+    const c = confirmFor("claim", r.p, false);
+    const kb = new InlineKeyboard().text("✅ Confirm", `confirm:yes:${c.id}`).text("❌ Cancel", `confirm:no:${c.id}`).row().text("⬅️ Kembali", `pv:claim:${r.p.position}`);
+    await editHere(ctx, c.text, kb);
+  });
   bot.callbackQuery(/^pv:(rs|rsnew):([1-9A-HJ-NP-Za-km-z]{32,44})$/, async (ctx) => {
     await ctx.answerCallbackQuery();
     const r = await resolvePosition(ctx, ctx.match![2]).catch(() => null);
@@ -491,6 +549,10 @@ export function registerPositionsView(bot: Bot): void {
     await ctx.answerCallbackQuery();
     if (action === "zap") return onZapoutPos(ctx, index);
     if (action === "flip") return showFlipPreview(ctx, p);
+    if (action === "claim") {
+      const m = claimMenu(p);
+      return editHere(ctx, m.text, m.kb);
+    }
     const c = confirmFor(action === "claim" ? "claim" : "remove", p, action === "repo");
     await presentConfirm(ctx, c.text, c.id);
   });

@@ -6,7 +6,7 @@ import { CONFIRM_TTL_MS } from "../config.js";
 import { log } from "../logger.js";
 import { currentUser } from "../users/context.js";
 
-export type ConfirmPurpose = "add" | "remove" | "claim" | "swap" | "reshape" | "zapout" | "withdraw" | "flip";
+export type ConfirmPurpose = "add" | "remove" | "claim" | "swap" | "reshape" | "zapout" | "withdraw" | "flip" | "claimsell";
 
 export type ConfirmRequest = {
   id: string;
@@ -127,10 +127,12 @@ export function expiredAction(r: Pick<ConfirmRequest, "purpose" | "payload">):
   | { kind: "zapout"; position: string }
   | { kind: "add" }
   | { kind: "flip"; position: string }
+  | { kind: "claimsell"; position: string }
   | { kind: "none" } {
   if (r.purpose === "claim" || r.purpose === "remove") return { kind: "renew" };
   if (r.purpose === "zapout" && typeof r.payload.position === "string") return { kind: "zapout", position: r.payload.position };
   if (r.purpose === "add") return { kind: "add" };
+  if (r.purpose === "claimsell" && typeof r.payload.position === "string") return { kind: "claimsell", position: r.payload.position };
   if (r.purpose === "flip" && typeof r.payload.position === "string") return { kind: "flip", position: r.payload.position };
   return { kind: "none" };
 }
