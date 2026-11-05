@@ -21,12 +21,12 @@ const pool = (step: number) => ({ pool: "X", name: "A-SOL", bin_step: step });
 test("bin presets give same bin count regardless of binStep; % follows binStep", () => {
   const a = computeRange(defaultPanel(pool(10)), 10, 1);
   const b = computeRange(defaultPanel(pool(100)), 100, 1);
-  assert.equal(a.total, 40);
-  assert.equal(b.total, 40);
+  assert.equal(a.total, 69); // default = 69 bins on every bin step
+  assert.equal(b.total, 69);
   assert.equal(a.above, 0);
   assert.ok(b.downPct > a.downPct);
-  assert.ok(Math.abs(b.downPct - (1 - Math.pow(1.01, -40)) * 100) < 1e-9);
-  assert.ok(Math.abs((b.minPrice as number) - Math.pow(1.01, -40)) < 1e-12);
+  assert.ok(Math.abs(b.downPct - (1 - Math.pow(1.01, -69)) * 100) < 1e-9);
+  assert.ok(Math.abs((b.minPrice as number) - Math.pow(1.01, -69)) < 1e-12);
   assert.equal(b.maxPrice, 1);
 });
 
@@ -65,7 +65,7 @@ test("default panel: only pool+amount missing, sensible defaults", () => {
   const p = defaultPanel();
   assert.equal(p.strategyId, "bid_ask");
   assert.equal(p.side, "one_sided_sol");
-  assert.equal(p.range.kind, "preset");
+  assert.equal(p.range.kind, "def69");
   assert.deepEqual(panelMissing(p), ["Pool", "Amount"]);
   const ready = { ...defaultPanel({ pool: "X", name: "A-SOL" }), amountSol: 0.5 };
   assert.deepEqual(panelMissing(ready), []);
@@ -76,7 +76,7 @@ test("edit one field keeps others", () => {
   p = setStrategy(p, "spot");
   assert.equal(p.strategyId, "spot");
   assert.equal(p.amountSol, 1);
-  assert.equal(p.range.kind === "preset" && p.range.bins, 40); // medium default
+  assert.equal(p.range.kind, "def69"); // 69-bin default
   p = setRangePreset(p, "wide");
   assert.equal(p.range.kind === "preset" && p.range.presetId, "wide");
   assert.equal(p.pool?.name, "A-SOL");
@@ -102,11 +102,11 @@ test("render + keyboard (reference layout)", () => {
   assert.match(t, /DRY_RUN/);
   const kb = panelKeyboard(p, { amountPresets: [0.5, 1, 2] }).inline_keyboard;
   const flat = JSON.stringify(kb);
-  for (const cb of ["ap:set:strat:spot", "ap:set:mode:one_sided_token", "ap:set:rng:wide", "ap:set:pct:100", "ap:edit:range", "ap:edit:amount", "ap:deploy", "ap:pools", "ap:home"])
+  for (const cb of ["ap:set:strat:spot", "ap:set:mode:one_sided_token", "ap:set:rng:def", "ap:set:rng:p0", "ap:set:rng:p3", "ap:set:pct:100", "ap:edit:range", "ap:edit:amount", "ap:deploy", "ap:pools", "ap:home"])
     assert.ok(flat.includes(cb), cb);
   // short labels so Telegram doesn't truncate
-  for (const row of kb) for (const b of row) assert.ok(b.text.length <= 12, b.text);
-  assert.ok(flat.includes('40b') && flat.includes('"69b'));
+  for (const row of kb) for (const b of row) if (!b.callback_data?.endsWith("rng:def")) assert.ok(b.text.length <= 12, b.text);
+  assert.ok(flat.includes("Default 69 bin") && flat.includes('"-25%"'));
   // token side hides SOL presets
   assert.ok(!JSON.stringify(panelKeyboard({ ...p, side: "one_sided_token" }, { amountPresets: [0.5] }).inline_keyboard).includes("ap:set:amt:"));
 });
@@ -116,7 +116,7 @@ test("panel text: token hint, range %, USD", () => {
   const t = renderPanelText(p, { liqSlippagePct: 10, dryRun: false });
   assert.match(t, /🎯 \*\*BONK\*\* · BONK-SOL · bin 100 · fee 1%/);
   assert.match(t, /TVL \$5(\.00)?K · F24 n\/a · Tot n\/a/);
-  assert.match(t, /📐 40 bins \(−32\.8%\)/);
+  assert.match(t, /📐 69 bins \(−49\.7%\)/);
   assert.match(t, /Token\/Double off/);
   assert.match(t, /0\.5 SOL \(\$75\) · SOL side/);
   assert.ok(t.split("\n").length <= 10, t);

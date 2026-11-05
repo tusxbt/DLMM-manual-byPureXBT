@@ -6,7 +6,9 @@ export type Settings = {
   amountPresets: number[];
   rangePresets: { down: number; up: number }[];
   /** % range presets (quick buttons in /add range picker). SOL side uses down, token side mirrors to up. */
-  /** Bin-count range presets for /add (each 1–1399). */
+  /** 4 % range preset buttons for /add (magnitude; SOL side = −X%, token side = +X%, double = ±X%). */
+  rangePct: number[];
+  /** legacy (pre-% UI) — no longer shown */
   binPresets: { narrow: number; medium: number; wide: number };
   /** Skip Confirm/Cancel and execute right after Preview/button (safeguards still enforced). */
   autoConfirm: boolean;
@@ -45,6 +47,14 @@ export function coerceBinPresets(
   return { narrow: c(o.narrow, fallback.narrow), medium: c(o.medium, fallback.medium), wide: c(o.wide, fallback.wide) };
 }
 
+export const DEFAULT_RANGE_PCT = [10, 25, 50, 80];
+/** 4 valid % values (0.1–99), else defaults. Old bin-count presets can't map to % without a bin step → reset. */
+export function coerceRangePct(v: unknown): number[] {
+  if (!Array.isArray(v) || v.length !== 4) return [...DEFAULT_RANGE_PCT];
+  const ok = v.map(Number).every((n) => Number.isFinite(n) && n >= 0.1 && n <= 99);
+  return ok ? v.map((n) => Math.round(Number(n) * 10) / 10) : [...DEFAULT_RANGE_PCT];
+}
+
 export function clampInt(v: unknown, fallback: number, min: number, max: number): number {
   const n = Math.floor(Number(v));
   if (v == null || !Number.isFinite(n)) return fallback;
@@ -70,6 +80,7 @@ function buildDefault(): Settings {
       { down: 70, up: 0 },
     ],
     binPresets: { narrow: 20, medium: 40, wide: 69 },
+    rangePct: [...DEFAULT_RANGE_PCT],
     autoConfirm: false,
     mixBidAskPct: 70,
     pnlBgDarkPct: 60,
@@ -98,6 +109,7 @@ export function loadSettings(): Settings {
     ...structuredClone(defaults),
     ...s,
     binPresets: coerceBinPresets(s.binPresets, defaults.binPresets),
+    rangePct: coerceRangePct(s.rangePct),
     autoConfirm: s.autoConfirm === true,
     mixBidAskPct: clampInt(s.mixBidAskPct, 70, 1, 99),
     pnlBgDarkPct: clampInt(s.pnlBgDarkPct, 60, 20, 95),

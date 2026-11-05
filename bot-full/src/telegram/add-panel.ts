@@ -1,3 +1,4 @@
+import { DEFAULT_RANGE_PCT } from "../store/settings.js";
 import { marketCap, fmtCompactUsd } from "../engine/supply.js";
 import { poolStatLines } from "./pool-format.js";
 /**
@@ -20,10 +21,45 @@ export type PresetId = (typeof PRESET_IDS)[number];
 
 export type PanelRange =
   | { kind: "preset"; presetId: PresetId; bins: number }
+  /** default: 69 bins (one position tx) — % depends on the pool's bin step */
+  | { kind: "def69" }
   | { kind: "bins"; below: number; above: number }
   | { kind: "price"; min: number; max: number }
   /** % from active price: down = −X%, up = +Y% */
-  | { kind: "pct"; down: number; up: number };
+  | { kind: "pct"; down: number; up: number; preset?: number };
+
+export const DEFAULT_BINS = 69;
+/** % covered by n bins: down = (1 − (1+s)^−n)·100, up = ((1+s)^n − 1)·100, split by side like splitBins. */
+export function binsToPct(binStep: number, side: PanelSide, n = DEFAULT_BINS): { down: number; up: number } {
+  const r = 1 + binStep / 10_000;
+  const { below, above } = splitBins(n, side);
+  return { down: (1 - Math.pow(r, -below)) * 100, up: (Math.pow(r, above) - 1) * 100 };
+}
+const f1 = (n: number) => (Math.round(n * 10) / 10).toFixed(1);
+export function pctShort(r: { down: number; up: number }): string {
+  if (r.down > 0 && r.up > 0) return r.down === r.up ? `±${f1(r.down)}%` : `-${f1(r.down)}%/+${f1(r.up)}%`;
+  return r.up > 0 ? `+${f1(r.up)}%` : `-${f1(r.down)}%`;
+}
+/** "Default 69 bin ≈ -50.1%" (needs pool bin step). */
+export function defaultRangeLabel(binStep: number, side: PanelSide): string {
+  return binStep > 0 ? `Default ${DEFAULT_BINS} bin ≈ ${pctShort(binsToPct(binStep, side))}` : `Default ${DEFAULT_BINS} bin`;
+}
+/** Preset magnitude → side-aware % (SOL −X, token +X, double ±X). */
+export function presetPct(v: number, side: PanelSide): { down: number; up: number } {
+  return side === "one_sided_sol" ? { down: v, up: 0 } : side === "one_sided_token" ? { down: 0, up: v } : { down: v, up: v };
+}
+export function presetPctLabel(v: number, side: PanelSide): string {
+  const n = Number.isInteger(v) ? String(v) : String(v);
+  return side === "one_sided_sol" ? `-${n}%` : side === "one_sided_token" ? `+${n}%` : `±${n}%`;
+}
+/** Range button ids: "def" or "p0".."p3". */
+export function setRangeChoice(p: AddPanelState, id: string, pcts: number[]): AddPanelState {
+  if (id === "def") return { ...p, range: { kind: "def69" } };
+  const m = /^p([0-3])$/.exec(id);
+  if (!m || pcts[Number(m[1])] == null) throw new Error(`Preset tidak ada: ${id}`);
+  const i = Number(m[1]);
+  return { ...p, range: { kind: "pct", ...presetPct(pcts[i], p.side), preset: i } };
+}
 
 export type PanelSide = "one_sided_sol" | "one_sided_token" | "two_sided";
 
@@ -62,7 +98,7 @@ export function defaultPanel(pool?: Record<string, unknown>, presets: BinPresets
     pool,
     side: strat.defaultSide,
     strategyId: strat.id,
-    range: { kind: "preset", presetId: "medium", bins: clampBins(presets.medium) },
+    range: presets ? { kind: "def69" } : { kind: "def69" },
   };
 }
 
@@ -105,7 +141,9 @@ export function computeRange(p: AddPanelState, binStep: number, activePrice?: nu
   let above: number;
   let clamped = false;
   let error: string | undefined;
-  if (p.range.kind === "preset") {
+  if (p.range.kind === "def69") {
+    ({ below, above } = splitBins(DEFAULT_BINS, p.side));
+  } else if (p.range.kind === "preset") {
     ({ below, above } = splitBins(clampBins(p.range.bins), p.side));
   } else if (p.range.kind === "bins") {
     below = p.range.below;
@@ -113,12 +151,17 @@ export function computeRange(p: AddPanelState, binStep: number, activePrice?: nu
     if (below + above > MAX_BINS_PER_POSITION)
       error = `Range ${below + above} bins > ${MAX_BINS_PER_POSITION} (batas 1 posisi). Kecilkan bins.`;
   } else if (p.range.kind === "pct") {
-    const pr = sidePct(p.side, p.range);
-    below = r > 1 && pr.down > 0 ? Math.ceil(-Math.log(1 - pr.down / 100) / Math.log(r)) : 0;
-    above = r > 1 && pr.up > 0 ? Math.ceil(Math.log(1 + pr.up / 100) / Math.log(r)) : 0;
+    const pr = p.range.preset != null ? presetPct(Math.max(p.range.down, p.range.up), p.side) : sidePct(p.side, p.range);
+    ({ below, above } = pctToBins(pr, binStep));
     if (r <= 1) error = "Bin step pool belum diketahui — pilih ulang pool.";
-    else if (below + above > MAX_BINS_PER_POSITION)
-      error = `Range ${below + above} bins > ${MAX_BINS_PER_POSITION} (batas 1 posisi Meteora 1400). Kecilkan %.`;
+    else if (below + above > MAX_BINS_PER_POSITION) {
+      // clamp to the max one position supports, keep the side ratio
+      clamped = true;
+      const scale = MAX_BINS_PER_POSITION / (below + above);
+      const nb = Math.floor(below * scale);
+      above = MAX_BINS_PER_POSITION - nb;
+      below = nb;
+    }
   } else {
     if (!activePrice || r <= 1) {
       below = 0;
@@ -151,6 +194,15 @@ export function computeRange(p: AddPanelState, binStep: number, activePrice?: nu
     clamped,
     error,
   };
+}
+
+/** % → bins (ceil) for a bin step. */
+export function pctToBins(pr: { down: number; up: number }, binStep: number): { below: number; above: number } {
+  const r = 1 + (binStep > 0 ? binStep / 10_000 : 0);
+  if (r <= 1) return { below: 0, above: 0 };
+  const below = pr.down > 0 ? Math.ceil(-Math.log(1 - Math.min(99.99, pr.down) / 100) / Math.log(r) - 1e-9) : 0;
+  const above = pr.up > 0 ? Math.ceil(Math.log(1 + pr.up / 100) / Math.log(r) - 1e-9) : 0;
+  return { below, above };
 }
 
 export function parsePositiveNumber(text: string): number | null {
@@ -230,9 +282,10 @@ export function parsePriceRange(text: string): { min: number; max: number } | nu
 }
 
 export function rangeLabel(r: PanelRange): string {
+  if (r.kind === "def69") return `default ${DEFAULT_BINS} bins`;
   if (r.kind === "preset") return `${r.presetId} (${r.bins} bins)`;
   if (r.kind === "bins") return `custom ${r.below} bawah / ${r.above} atas`;
-  if (r.kind === "pct") return `custom ${pctLabel(r)}`;
+  if (r.kind === "pct") return r.preset != null ? `preset ${pctLabel(r)}` : `custom ${pctLabel(r)}`;
   return `custom harga ${fmtNum(r.min, 8)} – ${fmtNum(r.max, 8)}`;
 }
 
@@ -359,11 +412,17 @@ export function renderPanelText(
 
 const tick = (on: boolean, label: string) => (on ? `✓ ${label}` : label);
 
+export function rangeButtons(kb: InlineKeyboard, p: AddPanelState, pcts: number[]): InlineKeyboard {
+  const step = Number(p.pool?.bin_step || 0);
+  kb.text(tick(p.range.kind === "def69", defaultRangeLabel(step, p.side)), "ap:set:rng:def").row();
+  pcts.slice(0, 4).forEach((v, i) => kb.text(tick(p.range.kind === "pct" && p.range.preset === i, presetPctLabel(v, p.side)), `ap:set:rng:p${i}`));
+  return kb.row();
+}
+
 export function panelKeyboard(
   p: AddPanelState,
-  opts: { binPresets?: BinPresets; amountPresets?: number[] } = {},
+  opts: { binPresets?: BinPresets; amountPresets?: number[]; rangePct?: number[] } = {},
 ): InlineKeyboard {
-  const presets = opts.binPresets ?? DEFAULT_BIN_PRESETS;
   const kb = new InlineKeyboard();
   for (const st of listStrategies()) kb.text(tick(st.id === p.strategyId, st.label), `ap:set:strat:${st.id}`);
   kb.row();
@@ -371,9 +430,7 @@ export function panelKeyboard(
   kb.text(tick(p.side === "one_sided_token", "Token"), "ap:set:mode:one_sided_token");
   kb.text(tick(p.side === "two_sided", "Double"), "ap:set:mode:two_sided");
   kb.row();
-  const cur = p.range.kind === "preset" ? p.range.presetId : "";
-  for (const id of PRESET_IDS) kb.text(tick(id === cur, `${clampBins(presets[id])}b`), `ap:set:rng:${id}`);
-  kb.row();
+  rangeButtons(kb, p, opts.rangePct ?? DEFAULT_RANGE_PCT);
   if (p.side === "one_sided_sol") {
     (opts.amountPresets ?? []).slice(0, 3).forEach((a, i) => kb.text(tick(p.amountSol === a && !p.amountPct, `${a}`), `ap:set:amt:${i}`));
   }
@@ -384,24 +441,9 @@ export function panelKeyboard(
   return kb;
 }
 
-export function rangePickerKeyboard(
-  p: AddPanelState,
-  presets: BinPresets = DEFAULT_BIN_PRESETS,
-  pctPresets: { down: number; up: number }[] = [],
-): InlineKeyboard {
-  const kb = new InlineKeyboard();
-  const cur = p.range.kind === "preset" ? p.range.presetId : "";
-  for (const id of PRESET_IDS) kb.text(tick(id === cur, `${clampBins(presets[id])}b`), `ap:set:rng:${id}`);
-  if (pctPresets.length) {
-    kb.row();
-    pctPresets.slice(0, 4).forEach((pp, i) => {
-      const r = sidePct(p.side, pp);
-      const on = p.range.kind === "pct" && p.range.down === r.down && p.range.up === r.up;
-      kb.text(tick(on, pctLabel(r).replace("..", "/")), `ap:set:rng:_pp${i}`);
-    });
-  }
+export function rangePickerKeyboard(p: AddPanelState, pcts: number[] = DEFAULT_RANGE_PCT): InlineKeyboard {
+  const kb = rangeButtons(new InlineKeyboard(), p, pcts);
   return kb
-    .row()
     .text("✏️ Range %", "ap:set:rng:_pct")
     .row()
     .text("✏️ Bins", "ap:set:rng:_bins")

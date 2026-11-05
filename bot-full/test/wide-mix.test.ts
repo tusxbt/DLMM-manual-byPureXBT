@@ -24,7 +24,7 @@ test("pct parsing respects side rules", () => {
   assert.deepEqual(sidePct("one_sided_token", { down: 50, up: 0 }), { down: 0, up: 50 });
 });
 
-test("pct → bins from bin step, wide allowed, 1400 cap", () => {
+test("pct → bins from bin step, wide allowed, clamp to 1399", () => {
   const base = { ...defaultPanel(pool), side: "one_sided_sol" as const };
   const c = computeRange({ ...base, range: { kind: "pct", down: 50, up: 0 } }, 100, 1);
   assert.equal(c.above, 0);
@@ -32,7 +32,7 @@ test("pct → bins from bin step, wide allowed, 1400 cap", () => {
   assert.ok(c.total > SINGLE_TX_BINS && !c.error);
   assert.ok(Math.abs(c.downPct - 50) < 1.5);
   const small = computeRange({ ...base, range: { kind: "pct", down: 90, up: 0 } }, 1, 1); // bin step 1bp
-  assert.ok(small.error && /1399|1400/.test(small.error));
+  assert.ok(!small.error && small.clamped && small.total === 1399);
   const two = computeRange({ ...base, side: "two_sided", range: { kind: "pct", down: 50, up: 20 } }, 100, 1);
   assert.ok(two.below > 0 && two.above > 0);
 });

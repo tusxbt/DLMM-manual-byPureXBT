@@ -1,3 +1,4 @@
+import { DEFAULT_RANGE_PCT } from "../store/settings.js";
 import { poolBlock, poolButtonLabel } from "./pool-format.js";
 import { screen, section, kv } from "./layout.js";
 import { getSupplyUi, marketCap } from "../engine/supply.js";
@@ -35,6 +36,7 @@ import {
   defaultPanel,
   setStrategy,
   setRangePreset,
+  setRangeChoice,
   parsePositiveNumber,
   parseBins,
   parsePriceRange,
@@ -113,7 +115,7 @@ export async function renderAddPanel(ctx: Context, note?: string): Promise<void>
     ctx,
     s.data.panelMsgId,
     text,
-    panelKeyboard(p, { binPresets: st.binPresets, amountPresets: st.amountPresets }),
+    panelKeyboard(p, { binPresets: st.binPresets, amountPresets: st.amountPresets, rangePct: st.rangePct }),
   );
 }
 
@@ -372,7 +374,7 @@ export function registerAddPanel(bot: Bot): void {
             : `💵 Ketik: <sol> <${sym}> (contoh 0.5 1000)`;
       return showSub(ctx, prompt, BACK_KB());
     }
-    if (field === "range") return showSub(ctx, "📏 Range — preset bins, preset %, atau custom (bins / % / harga). Maks 1400 bins; >69 bins = posisi lebar multi-tx.", rangePickerKeyboard(p, loadSettings().binPresets, loadSettings().rangePresets));
+    if (field === "range") return showSub(ctx, "📏 Range — default 69 bin (≈% tergantung bin step), 4 preset %, atau custom (% / bins / harga). Maks 1400 bins (dipotong otomatis); >69 bins = posisi lebar multi-tx.", rangePickerKeyboard(p, loadSettings().rangePct));
     if (field === "slip") {
       s.awaitingText = async (text) => {
         await deleteUserMsg(ctx);
@@ -477,7 +479,7 @@ export function registerAddPanel(bot: Bot): void {
           };
           return showSub(ctx, `📏 Ketik: <harga_min> <harga_max> dalam SOL per token${p.activePrice ? ` (aktif ${fmtNum(p.activePrice, 10)})` : ""}. >${MAX_BINS_PER_POSITION} bins akan dipotong.`, BACK_KB());
         }
-        s.data.panel = setRangePreset(p, v, loadSettings().binPresets);
+        s.data.panel = /^(def|p[0-3])$/.test(v) ? setRangeChoice(p, v, loadSettings().rangePct) : setRangePreset(p, v, loadSettings().binPresets);
       }
       await renderAddPanel(ctx);
     } catch (e) {
@@ -551,7 +553,7 @@ export function settingsText(note?: string): string {
       kv("Jup maks", `${st.jupPriorityMaxLamports} lamports`),
     ]),
     section("📏 Range & amount", [
-      kv("Bins", `${st.binPresets.narrow} / ${st.binPresets.medium} / ${st.binPresets.wide}`),
+      kv("Range", `Default 69 bin · ${st.rangePct.map((v) => v + "%").join(" / ")}`),
       kv("Range %", st.rangePresets.map((r) => pctLabel(r)).join(", ") || "-"),
       kv("Amount", `${st.amountPresets.join(" / ")} SOL`),
       kv("Mix", `BidAsk ${st.mixBidAskPct} / Spot ${100 - st.mixBidAskPct}`),
@@ -672,14 +674,14 @@ export function registerSettingsPanel(bot: Bot): void {
     const s = getSession(key(ctx));
     s.data.settingsMsgId = await upsert(ctx, s.data.settingsMsgId, presetSlotsText(st, "Direset ke default."), presetSlotsKb(st));
   });
-  bot.callbackQuery(/^st:slot:(bin|amt):(narrow|medium|wide|0|1|2)$/, async (ctx) => {
+  bot.callbackQuery(/^st:slot:(rp|amt):([0-3])$/, async (ctx) => {
     await ctx.answerCallbackQuery();
     const s = getSession(key(ctx));
     s.data.settingsMsgId = ctx.callbackQuery.message?.message_id ?? s.data.settingsMsgId;
-    const kind = ctx.match![1] as "bin" | "amt";
+    const kind = ctx.match![1] as "rp" | "amt";
     const slot = ctx.match![2];
     const st0 = loadSettings();
-    const cur = kind === "bin" ? st0.binPresets[slot as "narrow"] : st0.amountPresets[Number(slot)];
+    const cur = kind === "rp" ? st0.rangePct[Number(slot)] : st0.amountPresets[Number(slot)];
     s.awaitingText = async (text) => {
       await deleteUserMsg(ctx);
       const st = loadSettings();
@@ -692,7 +694,7 @@ export function registerSettingsPanel(bot: Bot): void {
       saveSettings(r.settings!);
       s.data.settingsMsgId = await upsert(ctx, s.data.settingsMsgId, presetSlotsText(r.settings!, "✅ Tersimpan — dipakai di panel /add."), presetSlotsKb(r.settings!));
     };
-    const label = kind === "bin" ? `bins slot ${slotNo(slot)} (1–${MAX_BINS_PER_POSITION})` : `amount slot ${Number(slot) + 1} (SOL, > 0)`;
+    const label = kind === "rp" ? `range % slot ${Number(slot) + 1} (0.1–99; SOL side = −X%, token = +X%, double = ±X%)` : `amount slot ${Number(slot) + 1} (SOL, > 0)`;
     s.data.settingsMsgId = await upsert(ctx, s.data.settingsMsgId, `✏️ Ketik nilai baru untuk ${label}.\nSekarang: ${cur ?? "-"}`, new InlineKeyboard().text("⬅️ Kembali", "st:pre"));
   });
   bot.callbackQuery("st:back", async (ctx) => {
@@ -799,17 +801,14 @@ export const BOT_COMMANDS: { command: string; description: string }[] = [
 
 
 // ---- per-slot preset editor (pure helpers exported for tests) ----
-const BIN_SLOTS = ["narrow", "medium", "wide"] as const;
-const slotNo = (slot: string) => (BIN_SLOTS.indexOf(slot as never) >= 0 ? BIN_SLOTS.indexOf(slot as never) + 1 : Number(slot) + 1);
 export const DEFAULT_AMOUNT_PRESETS = [0.5, 1, 2];
 
 export function presetSlotsText(st: Settings, note?: string): string {
-  const b = st.binPresets;
   const a = amountSlots(st);
   return [
     "**🎛 Tombol preset /add**",
     "",
-    `Bins: ${b.narrow}b · ${b.medium}b · ${b.wide}b`,
+    `Range %: ${st.rangePct.join("% · ")}%  (+ tombol Default 69 bin)`,
     `Amount: ${a.join(" · ")} SOL`,
     "",
     "Tap tombol untuk ganti nilainya.",
@@ -825,22 +824,23 @@ export function amountSlots(st: Settings): number[] {
 
 export function presetSlotsKb(st: Settings): InlineKeyboard {
   const kb = new InlineKeyboard();
-  for (const k of BIN_SLOTS) kb.text(`✏️ ${st.binPresets[k]}b`, `st:slot:bin:${k}`);
+  st.rangePct.forEach((v, i) => kb.text(`✏️ ${v}%`, `st:slot:rp:${i}`));
   kb.row();
   amountSlots(st).forEach((a, i) => kb.text(`✏️ ${a} SOL`, `st:slot:amt:${i}`));
   return kb.row().text("♻️ Reset default", "st:pre:reset").text("⬅️ Settings", "st:back");
 }
 
-export function applyPresetSlot(st: Settings, kind: "bin" | "amt", slot: string, text: string): { settings?: Settings; error?: string } {
-  const n = Number(String(text).trim().replace(",", ".").replace(/(sol|b|bins)$/i, "").trim());
-  const next: Settings = { ...st, binPresets: { ...st.binPresets }, amountPresets: amountSlots(st) };
-  if (kind === "bin") {
-    if (!BIN_SLOTS.includes(slot as never)) return { error: "Slot tidak dikenal." };
-    if (!Number.isInteger(n) || n < 1 || n > MAX_BINS_PER_POSITION) return { error: `Bins harus angka bulat 1–${MAX_BINS_PER_POSITION}.` };
-    next.binPresets[slot as "narrow"] = n;
+export function applyPresetSlot(st: Settings, kind: "rp" | "amt", slot: string, text: string): { settings?: Settings; error?: string } {
+  const n = Number(String(text).trim().replace(",", ".").replace(/(sol|%)$/i, "").replace(/^[-+±]/, "").trim());
+  const next: Settings = { ...st, rangePct: [...st.rangePct], amountPresets: amountSlots(st) };
+  if (kind === "rp") {
+    const i = Number(slot);
+    if (!(i >= 0 && i <= 3)) return { error: "Slot tidak dikenal." };
+    if (!Number.isFinite(n) || n < 0.1 || n > 99) return { error: "Range % harus 0.1–99 (mis. 25)." };
+    next.rangePct[i] = Math.round(n * 10) / 10;
   } else {
     const i = Number(slot);
-    if (!(i >= 0 && i <= 2)) return { error: "Slot tidak dikenal." };
+    if (!(i >= 0 && i <= 2) || String(text).trim().startsWith("-")) return { error: "Slot tidak dikenal / Amount harus > 0." };
     if (!Number.isFinite(n) || n <= 0 || n > 100_000) return { error: "Amount harus angka SOL > 0 (mis. 0.25)." };
     next.amountPresets[i] = Math.round(n * 1e6) / 1e6;
   }
@@ -848,5 +848,5 @@ export function applyPresetSlot(st: Settings, kind: "bin" | "amt", slot: string,
 }
 
 export function resetPresetSlots(st: Settings): Settings {
-  return { ...st, binPresets: { ...DEFAULT_BIN_PRESETS }, amountPresets: [...DEFAULT_AMOUNT_PRESETS] };
+  return { ...st, binPresets: { ...DEFAULT_BIN_PRESETS }, rangePct: [...DEFAULT_RANGE_PCT], amountPresets: [...DEFAULT_AMOUNT_PRESETS] };
 }
