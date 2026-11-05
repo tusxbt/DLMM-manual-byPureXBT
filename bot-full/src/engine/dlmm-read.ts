@@ -111,7 +111,27 @@ export type LivePosition = {
   max_bin?: number;
   amount_x?: number;
   amount_y?: number;
+  /** per-bin liquidity (price in SOL per token; x/y value in SOL terms) for the PnL card bins shape */
+  bin_liq?: BinLiq[];
 };
+
+export type BinLiq = { p: number; x: number; y: number };
+
+/** positionBinData → [{price, X value (in Y units), Y value}] sorted by price. */
+export function binLiqFrom(data: unknown[] | undefined, binStep: number | undefined, decX: number, decY: number): BinLiq[] | undefined {
+  if (!Array.isArray(data) || !binStep) return undefined;
+  const out: BinLiq[] = [];
+  for (const raw of data) {
+    const b = raw as { binId?: number; positionXAmount?: unknown; positionYAmount?: unknown };
+    if (b.binId == null) continue;
+    const p = binIdToUiPrice(b.binId, binStep, decX, decY);
+    const x = Number(String(b.positionXAmount ?? "0")) / 10 ** decX;
+    const y = Number(String(b.positionYAmount ?? "0")) / 10 ** decY;
+    if (!Number.isFinite(p) || p <= 0) continue;
+    out.push({ p, x: x * p, y });
+  }
+  return out.length ? out.sort((a, b) => a.p - b.p) : undefined;
+}
 
 
 /** Build '1'/'0' mask from SDK positionBinData (binId + positionXAmount/positionYAmount). */
@@ -147,6 +167,7 @@ export async function listLivePositions(costByPosition: Record<string, number> =
     binStep?: number;
     decX: number;
     decY: number;
+    liq?: BinLiq[];
   };
   const raws: Raw[] = [];
 
@@ -207,6 +228,7 @@ export async function listLivePositions(costByPosition: Record<string, number> =
         binStep,
         decX,
         decY,
+        liq: binLiqFrom(pd.positionBinData, binStep, decX, decY),
       });
     }
   }
@@ -241,6 +263,7 @@ export async function listLivePositions(costByPosition: Record<string, number> =
       mint_y: r.mintY,
       min_bin: r.minBin,
       max_bin: r.maxBin,
+      bin_liq: r.liq,
       amount_x: r.totalX,
       amount_y: r.totalY,
     };

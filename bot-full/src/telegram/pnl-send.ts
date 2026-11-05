@@ -1,5 +1,6 @@
 import { bgForCurrentUser } from "./pnl-bg.js";
 import type { MeteoraPnl } from "../engine/meteora-pnl.js";
+import type { BinLiq } from "../engine/dlmm-read.js";
 /** Build + send PnL card photos. Never throws (image is best-effort, never blocks a close). */
 import { InputFile, type Context } from "grammy";
 import { log, redactSecrets } from "../logger.js";
@@ -29,6 +30,8 @@ export type PositionSnapshot = {
   exit_label?: string | null;
   /** realized from close txs (no rent, no tx fee) */
   realized?: RealizedOut | null;
+  /** per-bin liquidity at snapshot time (real shape; changes after Flip/Reshape) */
+  bin_liq?: BinLiq[] | null;
 };
 
 export type RealizedOut = {
@@ -60,6 +63,7 @@ export function snapshotOf(p: Record<string, unknown>): PositionSnapshot {
     active_price: n(p.active_price),
     entry_price: n(p.entry_price),
     meteora: (p.meteora as MeteoraPnl | undefined) ?? null,
+    bin_liq: Array.isArray(p.bin_liq) ? (p.bin_liq as BinLiq[]) : null,
     ...trackedExtras(p),
   };
 }
@@ -148,6 +152,7 @@ function ownCard(s: PositionSnapshot, closed: boolean, now: Date): PnlCardData {
     timeLabel: kstStamp(now),
     strategy: s.strategy ?? null,
     bins: s.bins ?? null,
+    binLiq: s.bin_liq ?? null,
     modal: dep == null && s.amount_sol ? `${s.amount_sol} SOL` : null,
     exitLabel: s.exit_label ?? null,
   };
