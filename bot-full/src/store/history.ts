@@ -110,3 +110,46 @@ export function winRate(a: Pick<Agg, "wins" | "count" | "unknown">): number | nu
   const n = a.count - a.unknown;
   return n > 0 ? (a.wins / n) * 100 : null;
 }
+
+// ── calendar periods (KST) ──
+export type PeriodKind = "d" | "w" | "m";
+const MON = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+const keyOf = (ms: number) => new Date(ms).toISOString().slice(0, 10);
+const msOf = (key: string) => Date.parse(`${key}T00:00:00Z`);
+export const dayLabel = (k: string, year = false) => `${Number(k.slice(8, 10))} ${MON[Number(k.slice(5, 7)) - 1]}${year ? ` ${k.slice(0, 4)}` : ""}`;
+
+/**
+ * Day = KST calendar day; Week = calendar week Monday–Sunday (KST); Month = calendar month.
+ * offset 0 = current, −1 = previous, …
+ */
+export function periodRange(kind: PeriodKind, offset = 0, now = new Date()): { kind: PeriodKind; offset: number; start: string; end: string; days: string[]; label: string } {
+  const today = msOf(kstDay(now));
+  let s: number, e: number;
+  if (kind === "d") {
+    s = e = today + offset * 86400e3;
+  } else if (kind === "w") {
+    const dow = (new Date(today).getUTCDay() + 6) % 7; // Mon=0
+    s = today - dow * 86400e3 + offset * 7 * 86400e3;
+    e = s + 6 * 86400e3;
+  } else {
+    const d = new Date(today);
+    const first = Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + offset, 1);
+    s = first;
+    e = Date.UTC(new Date(first).getUTCFullYear(), new Date(first).getUTCMonth() + 1, 1) - 86400e3;
+  }
+  const days: string[] = [];
+  for (let t = s; t <= e; t += 86400e3) days.push(keyOf(t));
+  const start = keyOf(s), end = keyOf(e);
+  const label =
+    kind === "d" ? dayLabel(start, true)
+    : kind === "w" ? `${dayLabel(start)} – ${dayLabel(end, true)}`
+    : `${["Januari", "Februari", "Maret", "April", "Mei", "Juni", "Juli", "Agustus", "September", "Oktober", "November", "Desember"][Number(start.slice(5, 7)) - 1]} ${start.slice(0, 4)}`;
+  return { kind, offset, start, end, days, label };
+}
+
+export function inPeriod(list: PnlRecord[], p: { start: string; end: string }): PnlRecord[] {
+  return list.filter((r) => {
+    const k = kstDay(r.closed_at);
+    return k >= p.start && k <= p.end;
+  });
+}

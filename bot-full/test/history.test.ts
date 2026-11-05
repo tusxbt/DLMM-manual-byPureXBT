@@ -54,3 +54,43 @@ test("record from snapshot uses on-chain realized first; UI pages + callbacks fi
   const dc = UI.dailyCardData(list, 7, new Date("2026-11-05T10:00:00Z"));
   assert.equal(dc.days.length, 7); assert.ok(dc.best && dc.worst);
 });
+
+test("periods (KST): day, calendar week Mon–Sun, calendar month, prev offsets", () => {
+  const now = new Date("2026-11-05T03:00:00Z"); // Thu 5 Nov KST
+  const d = H.periodRange("d", 0, now);
+  assert.equal(d.start, "2026-11-05"); assert.equal(H.periodRange("d", -1, now).start, "2026-11-04");
+  const w = H.periodRange("w", 0, now);
+  assert.equal(w.start, "2026-11-02"); assert.equal(w.end, "2026-11-08"); assert.equal(w.days.length, 7);
+  assert.equal(H.periodRange("w", -1, now).start, "2026-10-26");
+  const m = H.periodRange("m", 0, now);
+  assert.equal(m.start, "2026-11-01"); assert.equal(m.end, "2026-11-30"); assert.equal(m.label, "November 2026");
+  const pm = H.periodRange("m", -10, now);
+  assert.equal(pm.start, "2026-01-01"); assert.equal(pm.end, "2026-01-31");
+  // 23:30 KST Sunday belongs to that week, 00:10 KST Monday to the next
+  assert.equal(H.kstDay("2026-11-08T14:30:00Z"), "2026-11-08");
+  assert.equal(H.kstDay("2026-11-08T15:10:00Z"), "2026-11-09");
+});
+
+test("period + token cards: aggregates, bars, buttons", () => {
+  const now = new Date("2026-11-05T03:00:00Z");
+  const list = [
+    { ...rec(1, 5, "2026-11-05T01:00:00Z"), opened_at: "2026-11-04T22:00:00Z", pnl_sol: 0.03 },
+    { ...rec(2, -2, "2026-11-05T02:00:00Z"), opened_at: "2026-11-05T00:00:00Z", pnl_sol: -0.01 },
+    rec(3, 4, "2026-11-03T02:00:00Z", "MINTB", "RAM/SOL"),
+    rec(4, 1, "2026-10-20T02:00:00Z"),
+  ];
+  const day = UI.periodCardData(list as never, "d", 0, now);
+  assert.equal(day.count, 2); assert.equal(day.totalUsd, 3); assert.equal(day.bars.length, 2); assert.equal(day.winRate, 50);
+  assert.ok(Math.abs((day.pnlSol as number) - 0.02) < 1e-9); assert.equal(day.pnlPct, 1.5);
+  const wk = UI.periodCardData(list as never, "w", 0, now);
+  assert.equal(wk.count, 3); assert.equal(wk.bars.length, 7); assert.equal(wk.bars[0].label, "Sen 2"); assert.equal(wk.best!.label, "PIRATE");
+  const mo = UI.periodCardData(list as never, "m", -1, now);
+  assert.equal(mo.count, 1); assert.equal(mo.bars.length, 31);
+  const tk = UI.tokenCardData(list as never, "MINTA", now)!;
+  assert.equal(tk.count, 3); assert.equal(tk.totalUsd, 4); assert.equal(tk.capitalUsd, 300); assert.equal(tk.exitUsd, 304);
+  assert.equal(tk.bars.length, 3); assert.equal(tk.extra![0][1], "5j 0m"); assert.match(tk.extra![1][1], /20 Oct → 5 Nov/);
+  const v = UI.periodView(list as never, "w", -1, now);
+  const cbs = v.kb.inline_keyboard.flat().map((b) => (b as { callback_data: string }).callback_data);
+  for (const c of ["hi:per:d:0", "hi:per:w:0", "hi:per:m:0", "hi:per:w:-2", "hi:per:w:0", "hi:pcd:w:-1"]) assert.ok(cbs.includes(c), c);
+  assert.ok(JSON.stringify(UI.tokenSummary(list as never, "MINTA").kb.inline_keyboard).includes("hi:tc:MINTA"));
+});
