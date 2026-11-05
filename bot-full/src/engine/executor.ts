@@ -129,6 +129,8 @@ export async function executePendingTxs(
 
 export const MAX_SEND_ATTEMPTS = 3; // first try + 2 automatic rebuilds on expiry
 const REBROADCAST_MS = 2000;
+/** status poll interval — confirmation is noticed within ~0.4s instead of up to 2s */
+export const STATUS_POLL_MS = 400;
 const PREFLIGHT_RETRY_MS = 800;
 /** RPC preflight rejected because its node hasn't seen / no longer has the blockhash (or lags). */
 export function isStaleBlockhashError(msg: string): boolean {
@@ -222,10 +224,17 @@ async function sendWithRetry(item: PendingTxItem, signers: Signer[]): Promise<st
 /** Rebroadcast until confirmed, failed, or block height passes lastValid (then final status check). */
 async function waitLanded(sig: string, raw: Buffer, lastValid: number): Promise<"ok" | "expired" | { err: unknown }> {
   const conn = getConnection();
+  let lastBroadcast = Date.now();
+  let lastHeightCheck = 0;
   for (;;) {
     const st = (await conn.getSignatureStatuses([sig])).value[0];
     if (st?.err) return { err: st.err };
     if (st && (st.confirmationStatus === "confirmed" || st.confirmationStatus === "finalized")) return "ok";
+    if (Date.now() - lastHeightCheck < REBROADCAST_MS) {
+      await new Promise((r) => setTimeout(r, STATUS_POLL_MS));
+      continue;
+    }
+    lastHeightCheck = Date.now();
     const height = await conn.getBlockHeight("confirmed");
     if (height > lastValid) {
       const fin = (await conn.getSignatureStatuses([sig], { searchTransactionHistory: true })).value[0];
@@ -233,11 +242,14 @@ async function waitLanded(sig: string, raw: Buffer, lastValid: number): Promise<
       if (fin && fin.confirmationStatus) return "ok";
       return "expired";
     }
-    try {
-      await conn.sendRawTransaction(raw, { skipPreflight: true, maxRetries: 0 });
-    } catch {
-      /* rebroadcast best-effort */
+    if (Date.now() - lastBroadcast >= REBROADCAST_MS) {
+      lastBroadcast = Date.now();
+      try {
+        await conn.sendRawTransaction(raw, { skipPreflight: true, maxRetries: 0 });
+      } catch {
+        /* rebroadcast best-effort */
+      }
     }
-    await new Promise((r) => setTimeout(r, REBROADCAST_MS));
+    await new Promise((r) => setTimeout(r, STATUS_POLL_MS));
   }
 }

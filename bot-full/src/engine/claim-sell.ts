@@ -1,3 +1,4 @@
+import { withKeyLock } from "../telegram/concurrency.js";
 /**
  * Claim fees → sell ONLY the claimed non-SOL token (exact wallet delta from the claim) to SOL via Jupiter.
  * No USD cap; uses the swap slippage setting.
@@ -63,6 +64,7 @@ export async function executeClaimSell(q: ClaimSellQuote, hooks: { onProgress?: 
   const cfg = loadConfig({ requireTelegram: false });
   if (cfg.dryRun) return { success: true, signatures: ["DRY_RUN_claim_1", "DRY_RUN_swap_1"], message: `DRY RUN — claim lalu jual ${q.feeTokenUi} token fee → ≈${q.estSolOut ?? "?"} SOL.` };
   const user = getWalletPublicKey();
+  return withKeyLock(`mint:${user.toBase58()}:${q.tokenMint}`, async () => {
   const before = await getTokenBalanceAtomic(q.tokenMint, user);
   const claim = await executePendingTxs(await buildClaimFeeTxs({ poolAddress: q.pool, positionAddress: q.position }), [], { onProgress: hooks.onProgress });
   if (!claim.success) return { success: false, signatures: claim.signatures, message: `Claim gagal: ${claim.error}`, error: claim.error };
@@ -74,4 +76,5 @@ export async function executeClaimSell(q: ClaimSellQuote, hooks: { onProgress?: 
   const sigs = [...claim.signatures, ...swap.signatures];
   if (!swap.success) return { success: false, signatures: sigs, message: `Claim OK · swap gagal ${swap.attempts}x: ${swap.error}. Token ${ui} tetap di wallet.`, error: swap.error, leftoverMint: q.tokenMint };
   return { success: true, signatures: sigs, message: `Claim OK · jual ${ui} token → ≈${(Number(swap.estOutLamports) / 1e9).toFixed(6)} SOL${swap.attempts > 1 ? ` (try ${swap.attempts})` : ""}` };
+  });
 }

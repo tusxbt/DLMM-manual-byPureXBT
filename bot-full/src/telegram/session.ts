@@ -52,6 +52,24 @@ export function resetSession(chatId: string): void {
   sessions.set(k(chatId), { step: null, data: {}, awaitingText: null });
 }
 
+/** Snapshot of the session at the start of a long action. */
+export type SessionMark = { obj: Session; step: unknown; awaiting: unknown; panel: unknown; keys: string };
+export function markSession(chatId: string): SessionMark {
+  const s = getSession(chatId);
+  return { obj: s, step: s.step, awaiting: s.awaitingText, panel: (s.data as Record<string, unknown>).panel, keys: Object.keys(s.data).sort().join(",") };
+}
+/**
+ * Reset only if the user did not start something else meanwhile (e.g. pasted a CA / opened
+ * the /add panel while a zapout was running) — concurrent flows must not clobber each other.
+ */
+export function resetSessionIfUnchanged(chatId: string, m: SessionMark): boolean {
+  const s = sessions.get(k(chatId));
+  if (!s) return false;
+  const same = s === m.obj && s.step === m.step && s.awaitingText === m.awaiting && (s.data as Record<string, unknown>).panel === m.panel && Object.keys(s.data).sort().join(",") === m.keys;
+  if (same) resetSession(chatId);
+  return same;
+}
+
 /** Return from an awaitingText handler to keep waiting for another try (invalid input). */
 export const RETRY = Symbol("retry-input");
 

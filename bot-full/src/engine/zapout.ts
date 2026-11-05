@@ -1,3 +1,5 @@
+import { withKeyLock } from "../telegram/concurrency.js";
+import { log } from "../logger.js";
 import { getMintDecimals } from "./decimals.js";
 /**
  * /zapout — claim fees, remove 100% + close, swap all non-SOL token delta → SOL via Jupiter.
@@ -45,11 +47,15 @@ function serializeTx(tx: Transaction, label: string): PendingTxItem {
   };
 }
 
-async function withBlockhash(tx: Transaction, feePayer: PublicKey): Promise<Transaction> {
-  applyPriorityFee(tx, await getPriorityFeeMicroLamports());
-  const { blockhash } = await getConnection().getLatestBlockhash("confirmed");
+/**
+ * Priority fee + fee payer only. The blockhash is a placeholder: executePendingTxs always puts a
+ * fresh one (getLatestBlockhashAndContext) and re-signs, since we hold every signer here — one
+ * RPC round-trip less per tx.
+ */
+function withBlockhash(tx: Transaction, feePayer: PublicKey, microLamports: number): Transaction {
+  applyPriorityFee(tx, microLamports);
   tx.feePayer = feePayer;
-  tx.recentBlockhash = blockhash;
+  tx.recentBlockhash = PublicKey.default.toBase58();
   return tx;
 }
 
@@ -203,9 +209,17 @@ export async function executeZapout(input: {
   const conn = getConnection();
   const positionPubKey = new PublicKey(input.positionAddress);
   const swapMints = nonSolMints(analysis.mintX, analysis.mintY);
+  // same-token closes must not overlap (balance-delta swap); other tokens stay parallel
+  const lockKeys = swapMints.map((m) => `mint:${user.toBase58()}:${m}`).sort();
+  const locked = (fn: () => Promise<ZapoutExecResult>) => lockKeys.reduceRight<() => Promise<ZapoutExecResult>>((f, k) => () => withKeyLock(k, f), fn)();
+  return locked(async () => {
 
   // pool load + pre-balances in parallel
-  let tPrep = Date.now();
+  const tPrep = Date.now();
+  // warm the swap path (module imports + wallet) while the close runs
+  const depsP = liveSwapDeps();
+  depsP.catch(() => undefined);
+  const prioP = getPriorityFeeMicroLamports();
   const [pool, ...balBefore] = await Promise.all([
     DLMM.create(conn, new PublicKey(input.poolAddress)),
     ...swapMints.map((m) => getTokenBalanceAtomic(m, user)),
@@ -231,17 +245,18 @@ export async function executeZapout(input: {
       shouldClaimAndClose: true, // claims fees + rewards and closes in the same tx(s)
     });
     const removeTxs: Transaction[] = Array.isArray(removeResult) ? removeResult : [removeResult];
-    const items: PendingTxItem[] = [];
-    for (let i = 0; i < removeTxs.length; i++) {
-      items.push(serializeTx(await withBlockhash(removeTxs[i], user), `zapout_close_${i + 1}`));
-    }
+    const micro = await prioP;
+    const items: PendingTxItem[] = removeTxs.map((tx, i) => serializeTx(withBlockhash(tx, user, micro), `zapout_close_${i + 1}`));
+    lap("build close", tClose);
+    const tSend = Date.now();
     const r = await executePendingTxs(items, [], { onProgress: input.onProgress }); // confirms at "confirmed"
+    lap("send+confirm close", tSend);
     allSigs.push(...r.signatures);
     if (!r.success) {
       steps.push({ step: "claim_remove_close", ok: false, detail: r.error || "remove/close gagal", signatures: r.signatures });
       return partial("remove/close gagal", steps, allSigs, r.error, timing);
     }
-    lap("claim+remove+close", tClose);
+
     steps.push({
       step: "claim_remove_close",
       ok: true,
@@ -261,7 +276,7 @@ export async function executeZapout(input: {
   } catch {
     /* UI only */
   }
-  const tQuote = Date.now();
+  const tBal = Date.now();
   let balAfter = await Promise.all(swapMints.map((m) => getTokenBalanceAtomic(m, user)));
   if (balAfter.every((b, i) => b <= (balBefore[i] as bigint))) {
     // close is confirmed, but a lagging RPC node may not show the tokens yet → re-read once
@@ -273,13 +288,16 @@ export async function executeZapout(input: {
   if (!todo.length) {
     steps.push({ step: "swap", ok: true, detail: "Tidak ada token non-SOL untuk di-swap (delta ≤ 0)." });
     lap("total", t0);
+  log("zapout_timing", timing.map(([k, v]) => `${k}=${v}ms`).join(" "));
     return done("Zapout selesai (tanpa swap).", steps, allSigs, timing);
   }
-  const deps = await liveSwapDeps();
-  lap("quote+build", tQuote);
+  lap("balance", tBal);
+  const deps = await depsP;
   const tSwap = Date.now();
   const sent = await Promise.all(todo.map((d) => swapToSolRobust(d.mint, d.delta, deps, { label: `zapout ${d.mint.slice(0, 4)}` })));
-  lap("swap", tSwap);
+  const sw = sent[0]?.timing;
+  if (sw) for (const k of ["quote", "build", "send+confirm"] as const) if (sw[k] != null) timing.push([`swap ${k}`, sw[k] as number]);
+  lap("swap total", tSwap);
   let allOk = true;
   const leftover: string[] = [];
   sent.forEach((r, i) => {
@@ -298,8 +316,10 @@ export async function executeZapout(input: {
     }
   });
   lap("total", t0);
+  log("zapout_timing", timing.map(([k, v]) => `${k}=${v}ms`).join(" "));
   if (!allOk) return { ...partial("Swap sebagian gagal — posisi sudah tertutup, token sisa di wallet", steps, allSigs, "swap gagal", timing), leftoverMints: leftover };
   return done("Zapout selesai.", steps, allSigs, timing);
+  });
 }
 
 export function nonSolMints(mintX: string, mintY: string): string[] {

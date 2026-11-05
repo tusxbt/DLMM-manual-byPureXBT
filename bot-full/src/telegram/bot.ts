@@ -1,4 +1,6 @@
 import { realizedFromFlows, realizedSol, fetchFlows, fetchAccountSigs, lifecycleRealized } from "../engine/realized.js";
+import { fetchClosedPnl } from "../engine/meteora-pnl.js";
+import { concurrentUpdates, isPositionLocked, lockPosition, releasePosition } from "./concurrency.js";
 import type { RealizedOut } from "./pnl-send.js";
 import { registerPnlBgUi } from "./pnl-bg.js";
 import { poolBlock } from "./pool-format.js";
@@ -17,7 +19,7 @@ import { runAsUser, currentUser } from "../users/context.js";
 import { hasWallet } from "../users/store.js";
 import { registerUsersUi, showWallet, allowedWithoutWallet, buildWithdrawTx, ONBOARD_TEXT, onboardKb } from "./users-ui.js";
 import { PublicKey } from "@solana/web3.js";
-import { askPrompt, runAwaitingInput, RETRY, getSession, resetSession } from "./session.js";
+import { askPrompt, runAwaitingInput, RETRY, getSession, resetSession, markSession, resetSessionIfUnchanged } from "./session.js";
 import { mainMenuKeyboard, CANCEL_KB, confirmKeyboard, addBackKeyboard } from "./menus.js";
 import { loadSettings } from "../store/settings.js";
 import { addTrackedPosition, loadTrackedPositions, removeTrackedPosition, upsertTrackedPosition, getTrackedPosition } from "../store/positions.js";
@@ -75,6 +77,8 @@ export function createBot(): Bot {
   const cfg = loadConfig();
   const bot = new Bot(cfg.telegramToken);
   installHtml(bot); // all messages → HTML, `code` = tap-to-copy
+  // don't block polling: buttons concurrent, messages ordered per chat (see concurrency.ts)
+  bot.use(concurrentUpdates());
 
   bot.use(async (ctx, next) => {
     if (!ctx.chat) return;
@@ -242,6 +246,7 @@ export function createBot(): Bot {
       await replyMenu(ctx);
       return;
     }
+    markConfirm(id, "confirmed"); // claim synchronously: a concurrent second tap now sees it taken
     if (req.purpose === "remove" || req.purpose === "zapout") {
       // compact close: the confirm message itself becomes the status message
       await executeConfirmed(ctx, req, ctx.callbackQuery.message?.message_id);
@@ -429,6 +434,7 @@ async function runClose(ctx: Context, req: ConfirmRequest, statusMsgId?: number)
   const snap = (req.payload as Record<string, unknown>).snapshot as PositionSnapshot | undefined;
   const pair = snap?.pair || String(req.payload.pool_name || "").replace(/-/g, "/") || "posisi";
   const t0 = Date.now();
+  const sMark = markSession(chatKey(ctx));
   let msgId = await setStatus(ctx, statusMsgId, `⏳ ${closeTitle(kind, pair)}…`);
   let outcome: CloseOutcome;
   try {
@@ -442,8 +448,16 @@ async function runClose(ctx: Context, req: ConfirmRequest, statusMsgId?: number)
     });
     markConfirm(id, result.success ? "executed" : "failed", result.message);
     const ms = Date.now() - t0;
+    // swap is already confirmed here; PnL work runs after it (never delays the swap) and in parallel
+    const tPnl = Date.now();
+    const closedOk = result.success || !!result.leftoverMints?.length;
+    const meteoraP =
+      closedOk && snap && !(result.signatures || []).every((x) => x.startsWith("DRY_RUN"))
+        ? fetchClosedPnl(snap.pool, loadConfig({ requireTelegram: false, skipWallet: true }).walletPublicKey.toBase58(), snap.position).catch(() => null)
+        : undefined;
     const realized = (result.signatures || []).length ? await computeRealized(result.signatures || [], snap).catch(() => null) : null;
-    outcome = { kind, pair, success: result.success, signatures: result.signatures || [], message: result.message, error: result.error, leftoverMints: result.leftoverMints, ms, realized, snapshot: snap ? { ...snap, realized } : snap };
+    log("close_timing", `${kind} ${pair} exec=${ms}ms realized=${Date.now() - tPnl}ms`);
+    outcome = { kind, pair, meteoraP, success: result.success, signatures: result.signatures || [], message: result.message, error: result.error, leftoverMints: result.leftoverMints, ms, realized, snapshot: snap ? { ...snap, realized } : snap };
     if (result.success && kind === "remove") removeTrackedPosition(String(req.payload.position));
   } catch (e) {
     markConfirm(id, "failed", (e as Error).message);
@@ -454,7 +468,7 @@ async function runClose(ctx: Context, req: ConfirmRequest, statusMsgId?: number)
   if (outcome.snapshot && (outcome.success || outcome.leftoverMints?.length))
     recordClose(outcome.snapshot, (req.payload as Record<string, unknown>).auto ? "auto" : kind);
   const repo = (req.payload as Record<string, unknown>).reposition as { bins?: number } | undefined;
-  resetSession(chatKey(ctx));
+  resetSessionIfUnchanged(chatKey(ctx), sMark);
   if (outcome.success && kind === "remove" && repo) {
     await openRepositionPanel(ctx, String(req.payload.pool), Number(repo.bins || 40));
   }
@@ -462,8 +476,7 @@ async function runClose(ctx: Context, req: ConfirmRequest, statusMsgId?: number)
 }
 
 /** In-flight auto zapouts (per position) — prevents double execution across ticks/users. */
-const autoLocks = new Set<string>();
-export const isAutoLocked = (position: string) => autoLocks.has(position);
+export const isAutoLocked = (position: string) => isPositionLocked(posLockKey(position));
 
 /**
  * Auto zapout (TP/SL with 🤖 ON): same executor path as manual zapout, signed with the user's
@@ -471,8 +484,8 @@ export const isAutoLocked = (position: string) => autoLocks.has(position);
  * No swap cap; a token with no Jupiter route stays in the wallet.
  */
 export async function runAutoZapout(api: Bot["api"], chatId: string, p: { position: string; pool: string; pool_name?: string; pair?: string }, why: string): Promise<boolean> {
-  if (autoLocks.has(p.position)) return false;
-  autoLocks.add(p.position);
+  const lk = posLockKey(p.position);
+  if (!lockPosition(lk)) return false; // manual action already running on it
   const ctx = {
     chat: { id: Number(chatId) },
     api,
@@ -508,7 +521,7 @@ export async function runAutoZapout(api: Bot["api"], chatId: string, p: { positi
     }).catch(() => undefined);
     return false;
   } finally {
-    autoLocks.delete(p.position);
+    releasePosition(lk);
   }
 }
 
@@ -526,7 +539,26 @@ async function editOrSend(ctx: Context, msgId: number | undefined, text: string,
 }
 
 async function executeConfirmed(ctx: Context, req: ConfirmRequest, statusMsgId?: number): Promise<void> {
+  const pos = (req.payload as Record<string, unknown>)?.position;
+  const lockKey = pos ? posLockKey(String(pos)) : null;
+  if (lockKey && !lockPosition(lockKey)) {
+    // another action (zapout / exit / flip / claim / auto TP-SL) is running on this position
+    if (ctx.callbackQuery) await ctx.answerCallbackQuery({ text: "⏳ Posisi ini sedang diproses — tunggu selesai.", show_alert: true }).catch(() => undefined);
+    else await ctx.reply("⏳ Posisi ini sedang diproses — tunggu selesai.").catch(() => undefined);
+    return;
+  }
+  try {
+    await executeConfirmedInner(ctx, req, statusMsgId);
+  } finally {
+    if (lockKey) releasePosition(lockKey);
+  }
+}
+
+const posLockKey = (position: string) => `${currentUser()?.userId ?? "-"}:${position}`;
+
+async function executeConfirmedInner(ctx: Context, req: ConfirmRequest, statusMsgId?: number): Promise<void> {
   const id = req.id;
+  const sMark = markSession(chatKey(ctx));
   markConfirm(id, "confirmed"); // prevents double execution (double tap / auto + tap)
   clearCardsCache(); // positions change after any action
   if (req.purpose === "remove" || req.purpose === "zapout") {
@@ -557,7 +589,7 @@ async function executeConfirmed(ctx: Context, req: ConfirmRequest, statusMsgId?:
       markConfirm(id, "failed", (e as Error).message);
       await editOrSend(ctx, progMsg, `❌ ${redactSecrets((e as Error).message)}`, mainMenuKeyboard());
     }
-    resetSession(chatKey(ctx));
+    resetSessionIfUnchanged(chatKey(ctx), sMark);
 }
 
 async function runConfirmedAction(

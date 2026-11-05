@@ -33,6 +33,8 @@ export type RobustSwapResult = {
   soldAtomic: bigint;
   estOutLamports: bigint;
   error?: string;
+  /** ms of the last attempt per phase */
+  timing?: { quote?: number; build?: number; "send+confirm"?: number };
   /** leftover token still in the wallet (when failed) */
   leftoverMint?: string;
 };
@@ -56,6 +58,7 @@ export async function swapToSolRobust(
   let amount = amountAtomic < start ? amountAtomic : start;
   let lastErr = "";
   let estOut = 0n;
+  let timing: RobustSwapResult["timing"] = {};
   for (let attempt = 1; attempt <= max; attempt++) {
     if (attempt > 1) {
       await deps.sleep(backoff[Math.min(attempt - 2, backoff.length - 1)]);
@@ -70,12 +73,19 @@ export async function swapToSolRobust(
     }
     if (amount <= 0n) return { success: true, signatures: sigs, attempts: attempt - 1, soldAtomic: 0n, estOutLamports: 0n };
     try {
+      timing = {};
+      let t = Date.now();
       const q = await deps.quote(mint, amount.toString());
+      timing.quote = Date.now() - t;
       estOut = BigInt(q.outAmount || "0");
+      t = Date.now();
       const tx = await deps.build(q);
+      timing.build = Date.now() - t;
+      t = Date.now();
       const r = await deps.send(tx);
+      timing["send+confirm"] = Date.now() - t;
       sigs.push(...(r.signatures || []));
-      if (r.success) return { success: true, signatures: sigs, attempts: attempt, soldAtomic: amount, estOutLamports: estOut };
+      if (r.success) return { success: true, signatures: sigs, attempts: attempt, soldAtomic: amount, estOutLamports: estOut, timing };
       lastErr = r.error || "swap gagal";
     } catch (e) {
       lastErr = (e as Error).message || String(e);

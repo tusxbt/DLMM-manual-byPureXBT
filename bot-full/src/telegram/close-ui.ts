@@ -13,7 +13,7 @@ import { buildPnlCardPng, type PositionSnapshot, type RealizedOut } from "./pnl-
 
 import { currentUser } from "../users/context.js";
 import { kv, pnlLine } from "./layout.js";
-import { fetchClosedPnl } from "../engine/meteora-pnl.js";
+import { fetchClosedPnl, type MeteoraPnl } from "../engine/meteora-pnl.js";
 import { loadConfig } from "../config.js";
 const details = new Map<string, { short: string; full: string; at: number; uid?: string; leftover?: string[] }>();
 
@@ -51,6 +51,8 @@ export type CloseOutcome = {
   snapshot?: PositionSnapshot;
   /** tokens left in the wallet after a failed swap */
   leftoverMints?: string[];
+  /** Meteora closed-PnL fetch started early (in parallel with the realized calc) */
+  meteoraP?: Promise<MeteoraPnl | null>;
 };
 
 export function closeTitle(kind: "remove" | "zapout", pair: string): string {
@@ -133,7 +135,7 @@ export async function finishClose(ctx: Context, msgId: number, o: CloseOutcome):
     try {
       await setStatus(ctx, msgId, `⏳ Ambil PnL Meteora…`);
       const wallet = loadConfig({ requireTelegram: false, skipWallet: true }).walletPublicKey.toBase58();
-      const m = await fetchClosedPnl(o.snapshot.pool, wallet, o.snapshot.position);
+      const m = await (o.meteoraP ?? fetchClosedPnl(o.snapshot.pool, wallet, o.snapshot.position));
       if (m) o.snapshot = { ...o.snapshot, meteora: m };
     } catch {
       /* fallback: estimasi */
