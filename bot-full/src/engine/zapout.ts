@@ -351,7 +351,7 @@ export function formatZapoutPreview(a: ZapoutAnalysis): string {
     `Token: ${a.tokenMint.slice(0, 4)}…${a.tokenMint.slice(-4)}`,
     `Est. token keluar (liq+fee): ${a.estTokenOutUi} ≈ $${a.estTokenOutUsd.toFixed(2)}`,
     `Fee: token ${a.feeTokenUi} | SOL ${a.feeSolUi} (SOL fee tetap di wallet)`,
-    `Slippage swap: ${a.swapSlippagePct}% (${jupiterSlippageBps(a.swapSlippagePct)} bps Jupiter)`,
+    `Slippage swap: dinamis Jupiter (maks ${a.swapSlippagePct}% = ${jupiterSlippageBps(a.swapSlippagePct)} bps)`,
     "Langkah (cepat): claim+remove 100%+close (1 alur, priority fee) → swap paralel SEMUA token non-SOL → SOL",
   ];
   if (a.warnOverCap) lines.push(a.warnOverCap);

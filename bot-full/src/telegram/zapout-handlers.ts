@@ -74,7 +74,7 @@ export async function onZapoutPos(ctx: Context, index: number): Promise<void> {
     const val = Number.isFinite(analysis.totalValueUsd) ? `$${(analysis.totalValueUsd + (Number.isFinite(analysis.unclaimedFeesUsd) ? analysis.unclaimedFeesUsd : 0)).toFixed(2)}` : "n/a";
     const summary = [
       `⚡ Zapout **${pair}** → SOL · ≈${val}`,
-      `slip ${analysis.swapSlippagePct}% · ${cfg.dryRun ? "🧪 DRY_RUN" : "⚠️ LIVE"} · konfirmasi ${CONFIRM_TTL_MS / 1000}s`,
+      `slip dinamis ≤${analysis.swapSlippagePct}% · ${cfg.dryRun ? "🧪 DRY_RUN" : "⚠️ LIVE"} · konfirmasi ${CONFIRM_TTL_MS / 1000}s`,
     ]
       .filter(Boolean)
       .join("\n");

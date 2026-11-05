@@ -547,7 +547,7 @@ export function settingsText(note?: string): string {
       kv("Auto close", st.autoConfirm ? "⚡ ON" : "OFF"),
       st.autoConfirm ? "Exit & → SOL tanpa Confirm" : "Semua aksi pakai Confirm",
     ]),
-    section("🎚 Slippage", [kv("Swap", `${getSwapSlippagePct()}%`), kv("Liquidity", `${getLiqSlippagePct()}%`)]),
+    section("🎚 Slippage", [kv("Swap", `dinamis ≤${getSwapSlippagePct()}%`), kv("Liquidity", `${getLiqSlippagePct()}%`)]),
     section("🚀 Priority fee", [
       kv("DLMM", st.priorityFeeMicroLamports > 0 ? `${st.priorityFeeMicroLamports} µL/CU` : "auto"),
       kv("Jup maks", `${st.jupPriorityMaxLamports} lamports`),
@@ -775,7 +775,7 @@ export function registerSettingsPanel(bot: Bot): void {
         ? `Ketik 3 angka bins narrow medium wide (1–1399). Sekarang: ${Object.values(loadSettings().binPresets).join(" ")}`
         : f === "presets"
         ? `Ketik amount presets SOL (contoh: 0.5 1 2). Sekarang: ${loadSettings().amountPresets.join(", ")}`
-        : `Ketik ${f === "swap" ? "SWAP" : "LIQ"} slippage % (0.1–50). Sekarang: ${f === "swap" ? getSwapSlippagePct() : getLiqSlippagePct()}%`;
+        : `Ketik ${f === "swap" ? "SWAP slippage MAKS (Jupiter dinamis, cap)" : "LIQ slippage"} % (0.1–50). Sekarang: ${f === "swap" ? getSwapSlippagePct() : getLiqSlippagePct()}%`;
     s.data.settingsMsgId = await upsert(ctx, s.data.settingsMsgId, `⚙️ ${prompt}`, back);
   });
 }

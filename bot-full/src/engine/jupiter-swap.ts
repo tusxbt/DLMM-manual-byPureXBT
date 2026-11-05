@@ -43,7 +43,7 @@ export async function getSwapQuote(input: {
   const slippageBps = input.slippageBps ?? jupiterSlippageBps();
   const url =
     `${swapBase()}/quote?inputMint=${inputMint}&outputMint=${outputMint}` +
-    `&amount=${input.amountAtomic}&slippageBps=${slippageBps}`;
+    `&amount=${input.amountAtomic}&slippageBps=${slippageBps}&dynamicSlippage=true`;
   const headers: Record<string, string> = { accept: "application/json" };
   const cfg = loadConfig({ requireTelegram: false, skipWallet: true });
   if (cfg.jupiterApiKey) headers["x-api-key"] = cfg.jupiterApiKey;
@@ -64,6 +64,8 @@ export async function getSwapQuote(input: {
 export async function buildSwapTx(input: {
   quote: SwapQuote;
   wrapAndUnwrapSol?: boolean;
+  /** cap for Jupiter dynamic slippage (bps); default = swap slippage setting */
+  maxSlippageBps?: number;
 }): Promise<PendingTxItem> {
   const userPublicKey = getWalletPublicKey().toBase58();
   const cfg = loadConfig({ requireTelegram: false, skipWallet: true });
@@ -78,6 +80,9 @@ export async function buildSwapTx(input: {
     userPublicKey,
     wrapAndUnwrapSol: input.wrapAndUnwrapSol !== false,
     dynamicComputeUnitLimit: true,
+    // Jupiter estimates slippage per swap (simulation + token category), capped at maxBps.
+    // It overrides the quote's slippageBps (that stays only as the fallback threshold).
+    dynamicSlippage: dynamicSlippageParam(input.maxSlippageBps),
     ...(jupiterPrioritization() ? { prioritizationFeeLamports: jupiterPrioritization() } : {}),
   };
   const res = await fetch(`${swapBase()}/swap`, { method: "POST", headers, body: JSON.stringify(body) });
@@ -90,12 +95,18 @@ export async function buildSwapTx(input: {
   VersionedTransaction.deserialize(Buffer.from(swapTransaction, "base64"));
   void getConnection;
 
-  log("swap_build", `swap ${input.quote.inputMint.slice(0, 6)}→${input.quote.outputMint.slice(0, 6)}`);
+  const ds = data.dynamicSlippageReport as { slippageBps?: number; heuristicMaxSlippageBps?: number; categoryName?: string } | undefined;
+  log("swap_build", `swap ${input.quote.inputMint.slice(0, 6)}→${input.quote.outputMint.slice(0, 6)} slip=${ds?.slippageBps ?? "?"}bps dyn (cap ${dynamicSlippageParam(input.maxSlippageBps).maxBps}, ${ds?.categoryName ?? "-"})`);
   return {
     serialized: swapTransaction,
     encoding: "versioned",
     label: "jupiterSwap",
   };
+}
+
+/** Swap API v1 `dynamicSlippage: { maxBps }` — cap from the swap slippage setting (now a max). */
+export function dynamicSlippageParam(maxBps?: number): { maxBps: number } {
+  return { maxBps: Math.max(10, Math.min(5000, Math.round(maxBps ?? jupiterSlippageBps()))) };
 }
 
 /** @deprecated alias */
