@@ -17,8 +17,10 @@ log(
 );
 
 import { startTpslMonitor } from "./telegram/tpsl-ui.js";
+import { startScanHttp } from "./scan/http.js";
 import { runAutoZapout } from "./telegram/bot.js";
 const bot = createBot();
+if (startScanHttp()) log("scan", "GET /scan/latest aktif (Bearer SCAN_HTTP_TOKEN)");
 startTpslMonitor(bot, runAutoZapout); // 15s loop only while some TP/SL exists; auto zapout only when toggled ON
 
 bot.api

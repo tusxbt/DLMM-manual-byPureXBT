@@ -29,6 +29,9 @@ import { createConfirm, takeAwaiting, markConfirm, cancelConfirm, renewConfirm, 
 import { resolvePosition, clearCardsCache, showFlipPreview, showClaimSellPreview } from "./positions-view.js";
 import { executeClaimSell } from "../engine/claim-sell.js";
 import { executeFlip } from "../engine/flip.js";
+import { runScan, readLatest } from "../scan/scanner.js";
+import { scanText } from "../scan/format.js";
+import { rootDataDir } from "../users/store.js";
 import { registerTpslUi } from "./tpsl-ui.js";
 import { executePendingTxs } from "../engine/executor.js";
 import { listStrategies, requireStrategy } from "../strategies/index.js";
@@ -134,6 +137,17 @@ export function createBot(): Bot {
   bot.command("claim", async (ctx) => startClaim(ctx));
   bot.command("swap", async (ctx) => startSwap(ctx));
   bot.command("reshape", async (ctx) => startReshape(ctx));
+  // read-only pool scanner: cached ≤10 min, no trade buttons
+  bot.command("scan", async (ctx) => {
+    const msg = await ctx.reply("🔎 Scan pool…");
+    try {
+      const cached = readLatest(rootDataDir());
+      const fresh = cached && Date.now() - Date.parse(cached.ts) < 10 * 60_000 ? cached : await runScan({ dataDir: rootDataDir() });
+      await ctx.api.editMessageText(ctx.chat!.id, msg.message_id, scanText(fresh, 10), { link_preview_options: { is_disabled: true } });
+    } catch (e) {
+      await ctx.api.editMessageText(ctx.chat!.id, msg.message_id, `❌ Scan gagal: ${redactSecrets((e as Error).message)}`);
+    }
+  });
   bot.command("zapout", async (ctx) => startZapout(ctx));
 
   bot.callbackQuery(/^menu:(.+)$/, async (ctx) => {

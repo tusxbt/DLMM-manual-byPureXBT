@@ -215,3 +215,16 @@ Without the key the wallet files are useless; with both, anyone can spend the fu
 
 - Mix = BidAsk X% + Spot (100−X)% di posisi & range yang sama (default 70/30, Settings → ✏️ Mix ratio).
 - Satu Confirm untuk keduanya; preview menampilkan pembagian. Jika langkah Spot gagal → ▶️ Retry / 🚪 Exit. Kartu posisi menampilkan `Mix 70/30`.
+
+## 🔎 Pool scanner (read-only)
+
+`npm run scan` atau `/scan` di Telegram: scan pool DLMM pasangan SOL dari Meteora datapi, ranking skor 0–100
+(fee APR 40% · fees 24h 25% · volume 24h 20% · TVL 15%, log-scaled, −5 per risk flag). Hasil top N disimpan di
+`DATA_DIR/scan/latest.json`. **Tidak ada transaksi / auto-trade.** `/scan` memakai cache ≤10 menit.
+
+Risk flags: `LOW_TVL`, `APR_VS_TVL` (APR >2000% di TVL <$100K), `NEW_POOL`, `LOW_FEE_VOL` (fee/volume < ½ base fee),
+`VOL_SPIKE` (vol >50× TVL), `FREEZE_AUTH`, `UNVERIFIED`, `FEW_HOLDERS` (<500). Mint authority tidak tersedia murah di datapi → tidak dicek.
+
+Env: `SCAN_MIN_TVL` (10000), `SCAN_MIN_VOL24H` (25000), `SCAN_MAX_BIN_STEP` (200), `SCAN_MIN_BIN_STEP` (1), `SCAN_TOP_N` (15, max 50),
+`SCAN_PAGES` (3 × 100 pool, urut volume), `SCAN_NEW_POOL_HOURS` (24). HTTP opsional: `SCAN_HTTP_TOKEN` (wajib untuk aktif),
+`SCAN_HTTP_PORT` (8787), `SCAN_HTTP_HOST` (127.0.0.1) → `GET /scan/latest` dengan `Authorization: Bearer <token>`.

@@ -14,7 +14,8 @@
     "start": "node dist/index.js",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "tsx --test test/*.test.ts",
-    "smoke": "tsx scripts/smoke-read.ts"
+    "smoke": "tsx scripts/smoke-read.ts",
+    "scan": "tsx scripts/scan.ts"
   },
   "dependencies": {
     "@meteora-ag/dlmm": "1.9.4",
