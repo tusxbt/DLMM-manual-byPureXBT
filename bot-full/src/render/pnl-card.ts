@@ -81,6 +81,17 @@ function font(ctx: SKRSContext2D, px: number, bold = false): void {
   ctx.font = `${px}px ${bold ? "CardSansBold" : "CardSans"}, sans-serif`;
 }
 
+/** Short vertical tag for the chart side: SPOT / CURVE / BIDASK / MIX 70/30; unknown → MANUAL. */
+export function strategyTag(s: string | null | undefined): string {
+  const t = String(s ?? "").trim();
+  if (!t) return "MANUAL";
+  if (/bid.?ask/i.test(t)) return "BIDASK";
+  if (/spot/i.test(t)) return "SPOT";
+  if (/curve/i.test(t)) return "CURVE";
+  if (/mix/i.test(t)) return t.toUpperCase().replace(/\s+/g, " ");
+  return t.toUpperCase().slice(0, 12);
+}
+
 export function niceTicks(lo: number, hi: number, n = 5): number[] {
   const span = hi - lo;
   if (!(span > 0)) return [lo];
@@ -198,7 +209,28 @@ export function renderPnlCard(d: PnlCardData): Buffer {
   center(d.source === "Meteora" ? "PnL · Meteora" : d.source === "realized" ? "PnL realized · tanpa rent & fee tx" : "PnL estimasi", 368, 16, MUTED);
 
   // full-width minimal area chart
-  const cx = 70, cw = W - 140, cy = 410, ch = 170;
+  const cx = 70, cw = W - 190, cy = 410, ch = 170;
+  // vertical strategy tag on the right of the chart
+  {
+    const tag = strategyTag(d.strategy);
+    ctx.save();
+    ctx.translate(cx + cw + 46, cy + ch / 2);
+    ctx.rotate(-Math.PI / 2);
+    semi(ctx, 15);
+    const tw = ctx.measureText(tag).width + 28;
+    ctx.fillStyle = "rgba(148,163,184,0.10)";
+    ctx.beginPath();
+    ctx.roundRect(-tw / 2, -16, tw, 32, 16);
+    ctx.fill();
+    ctx.strokeStyle = `rgba(${rgb},0.55)`;
+    ctx.lineWidth = 1.5;
+    ctx.stroke();
+    ctx.fillStyle = TEXT;
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.fillText(tag.split("").join("\u200A"), 0, 1);
+    ctx.restore();
+  }
   const candles = d.candles || [];
   if (candles.length >= 2) {
     const closes = candles.map((k) => k.c);
@@ -214,13 +246,25 @@ export function renderPnlCard(d: PnlCardData): Buffer {
     const X = (i: number) => cx + (i / (closes.length - 1)) * cw;
     if (d.minPrice && d.maxPrice) {
       const y1 = Y(d.maxPrice), y2 = Y(d.minPrice);
-      ctx.fillStyle = "rgba(148,163,184,0.07)";
+      ctx.fillStyle = "rgba(148,163,184,0.06)";
       ctx.fillRect(cx, y1, cw, Math.max(2, y2 - y1));
-      thin(ctx, 13);
-      ctx.fillStyle = "rgba(148,163,184,0.6)";
-      ctx.textAlign = "right";
-      ctx.fillText(`range ${fmtPx(d.minPrice)} – ${fmtPx(d.maxPrice)} SOL`, cx + cw, Math.min(cy + ch + 24, y2 + 20));
-      ctx.textAlign = "left";
+      // max / min bin price lines
+      for (const [y, lbl, below] of [[y1, `max bin ${fmtPx(d.maxPrice)}`, false], [y2, `min bin ${fmtPx(d.minPrice)}`, true]] as const) {
+        ctx.save();
+        ctx.setLineDash([6, 5]);
+        ctx.strokeStyle = "rgba(148,163,184,0.55)";
+        ctx.lineWidth = 1.2;
+        ctx.beginPath();
+        ctx.moveTo(cx, y);
+        ctx.lineTo(cx + cw, y);
+        ctx.stroke();
+        ctx.restore();
+        thin(ctx, 13);
+        ctx.fillStyle = "rgba(203,213,225,0.8)";
+        ctx.textAlign = "right";
+        ctx.fillText(lbl, cx + cw - 4, below ? y + 16 : y - 7);
+        ctx.textAlign = "left";
+      }
     }
     const area = ctx.createLinearGradient(0, cy, 0, cy + ch);
     area.addColorStop(0, `rgba(${rgb},0.22)`);
