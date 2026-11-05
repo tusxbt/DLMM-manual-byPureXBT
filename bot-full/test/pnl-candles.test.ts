@@ -21,7 +21,7 @@ test("drawCandles uses real OHLC (distinct high/low from open/close)", () => {
   assert.equal(strategyTag("Mix 70/30"), "MIX 70/30");
 });
 
-test("position card: candlesticks + no Status row + vertical strategy tag", () => {
+test("position card: candlesticks + no Status row (no side tag)", () => {
   const candles: Candle[] = Array.from({ length: 24 }, (_, i) => {
     const o = 1 + Math.sin(i / 3) * 0.05;
     const c = o + (i % 3 === 0 ? -0.03 : 0.025);
@@ -38,5 +38,5 @@ test("position card: candlesticks + no Status row + vertical strategy tag", () =
   const src = fs.readFileSync(new URL("../src/render/pnl-card.ts", import.meta.url), "utf8");
   assert.ok(!/\["Status"/.test(src));
   assert.ok(/drawCandles\(/.test(src));
-  assert.ok(/rotate\(-Math\.PI \/ 2\)/.test(src));
+  assert.ok(!/rotate\(-Math\.PI \/ 2\)/.test(src));
 });

@@ -267,7 +267,7 @@ export function renderPnlCard(d: PnlCardData): Buffer {
   center(d.source === "Meteora" ? "PnL · Meteora" : d.source === "realized" ? "PnL realized · tanpa rent & fee tx" : "PnL estimasi", 368, 16, MUTED);
 
   // full-width minimal area chart
-  const cx = 70, cw = W - 160, cy = 410, ch = 170;
+  const cx = 70, cw = W - 140, cy = 410, ch = 170;
   const candles = d.candles || [];
   if (candles.length >= 2) {
     const closes = candles.map((k) => k.c);
@@ -305,18 +305,6 @@ export function renderPnlCard(d: PnlCardData): Buffer {
     }
     // dark-mode candlesticks — real OHLC from GeckoTerminal (never synthesized from closes alone)
     drawCandles(ctx, candles, cx, cw, cy, ch, Y, X);
-    // vertical strategy tag on the right of the chart
-    {
-      const tag = strategyTag(d.strategy);
-      thin(ctx, 12);
-      ctx.save();
-      ctx.fillStyle = "rgba(148,163,184,0.7)";
-      ctx.translate(cx + cw + 18, cy + ch / 2);
-      ctx.rotate(-Math.PI / 2);
-      ctx.textAlign = "center";
-      ctx.fillText(tag, 0, 0);
-      ctx.restore();
-    }
     const dot = (x: number, y: number, fill: string, label: string, right: boolean) => {
       ctx.beginPath(); ctx.arc(x, y, 5, 0, Math.PI * 2); ctx.fillStyle = fill; ctx.fill();
       ctx.lineWidth = 1.5; ctx.strokeStyle = "#0b0f14"; ctx.stroke();
