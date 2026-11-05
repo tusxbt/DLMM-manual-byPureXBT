@@ -1,4 +1,4 @@
-import { realizedFromFlows, realizedSol, fetchFlows } from "../engine/realized.js";
+import { realizedFromFlows, realizedSol, fetchFlows, fetchAccountSigs, lifecycleRealized } from "../engine/realized.js";
 import type { RealizedOut } from "./pnl-send.js";
 import { registerPnlBgUi } from "./pnl-bg.js";
 import { poolBlock } from "./pool-format.js";
@@ -393,7 +393,23 @@ async function computeRealized(sigs: string[], snap?: PositionSnapshot): Promise
   const real = sigs.filter((x) => !x.startsWith("DRY_RUN"));
   if (!real.length) return null;
   const wallet = loadConfig({ requireTelegram: false, skipWallet: true }).walletPublicKey.toBase58();
-  const r = realizedFromFlows(await fetchFlows(real), wallet);
+  const depHint = snap?.amount_sol && snap.amount_sol > 0 ? snap.amount_sol : null;
+  // full position lifecycle (open, Flip/Reshape withdraw+add, claims, close) + swap txs
+  let life: ReturnType<typeof lifecycleRealized> = null;
+  let r: ReturnType<typeof realizedFromFlows>;
+  if (snap?.position) {
+    try {
+      const posSigs = await fetchAccountSigs(snap.position);
+      const all = [...new Set([...posSigs, ...real])];
+      const flows = await fetchFlows(all);
+      if (flows.length === all.length) life = lifecycleRealized(flows, wallet, depHint);
+      else log("realized", `lifecycle: ${all.length - flows.length} tx tidak terbaca → fallback close+swap`, "warn");
+    } catch (e) {
+      log("realized", `lifecycle fetch failed: ${(e as Error).message}`, "warn");
+    }
+  }
+  if (life) r = life;
+  else r = realizedFromFlows(await fetchFlows(real), wallet);
   let solUsd: number | null = null;
   try {
     solUsd = await getSolUsd();
@@ -403,7 +419,7 @@ async function computeRealized(sigs: string[], snap?: PositionSnapshot): Promise
   const mints = Object.keys(r.tokenNet);
   const prices = mints.length ? await getUsdPrices(mints).catch(() => ({}) as Record<string, number>) : {};
   const depUsd = snap?.meteora?.depositUsd ?? (snap?.cost_usd && snap.cost_usd > 0 ? snap.cost_usd : null);
-  const depSol = snap?.amount_sol && snap.amount_sol > 0 ? snap.amount_sol : depUsd != null && solUsd ? depUsd / solUsd : null;
+  const depSol = life ? life.depositSol : depHint ?? (depUsd != null && solUsd ? depUsd / solUsd : null);
   return { ...r, ...realizedSol(r, solUsd, prices, depSol) };
 }
 

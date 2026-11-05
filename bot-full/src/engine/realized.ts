@@ -26,6 +26,8 @@ export type TxFlow = {
   feePayer: string;
   preTok: TokBal[];
   postTok: TokBal[];
+  /** tx contains InitializePosition (position lifecycle start) */
+  opensPosition?: boolean;
 };
 
 export type Realized = { solNet: number; tokenNet: Record<string, number>; rentSol: number; feeSol: number };
@@ -129,6 +131,43 @@ export function realizedSol(
   };
 }
 
+/**
+ * Full-lifecycle realized: every tx that touched the position (open, Mix stages, Flip/Reshape
+ * withdraw + re-add, claims, close) + the swap txs. Flip/Reshape withdraws can send SOL (and
+ * tokens) back to the wallet mid-life; counting only close + swap missed that SOL.
+ *
+ * Returns a Realized whose solNet is the EXIT side (lifecycle net + deposit), so realizedSol()
+ * gives pnl = lifecycle net. null when the open tx isn't among the flows (history incomplete).
+ */
+export function lifecycleRealized(flows: TxFlow[], wallet: string, depositSolHint: number | null): (Realized & { depositSol: number; lifecycleSol: number }) | null {
+  if (!flows.some((f) => f.opensPosition)) return null;
+  const r = realizedFromFlows(flows, wallet);
+  let dep = depositSolHint != null && depositSolHint > 0 ? depositSolHint : 0;
+  if (!dep) {
+    // no tracked amount: SOL that left the wallet (per tx, rent & fee excluded)
+    for (const f of flows) {
+      const one = realizedFromFlows([f], wallet).solNet;
+      if (one < 0) dep -= one;
+    }
+  }
+  return { ...r, solNet: r.solNet + dep, depositSol: dep, lifecycleSol: r.solNet };
+}
+
+/** Successful signatures that touched an account (newest first, up to `max`). */
+export async function fetchAccountSigs(address: string, max = 3000): Promise<string[]> {
+  const conn = getConnection();
+  const out: string[] = [];
+  let before: string | undefined;
+  while (out.length < max) {
+    const page = await conn.getSignaturesForAddress(new PublicKey(address), { limit: 1000, before }, "confirmed");
+    if (!page.length) break;
+    for (const s of page) if (!s.err) out.push(s.signature);
+    before = page[page.length - 1].signature;
+    if (page.length < 1000) break;
+  }
+  return out;
+}
+
 /** Fetch landed txs (parsed) and convert to flows. Missing txs are skipped (logged). */
 export async function fetchFlows(signatures: string[]): Promise<TxFlow[]> {
   const conn = getConnection();
@@ -142,7 +181,7 @@ export async function fetchFlows(signatures: string[]): Promise<TxFlow[]> {
             const keys = tx.transaction.message.accountKeys.map((k) => (k.pubkey instanceof PublicKey ? k.pubkey.toBase58() : String(k.pubkey)));
             const tb = (l: typeof tx.meta.preTokenBalances): TokBal[] =>
               (l || []).map((t) => ({ i: t.accountIndex, mint: t.mint, owner: t.owner, amount: t.uiTokenAmount.amount, decimals: t.uiTokenAmount.decimals }));
-            out.push({ keys, pre: tx.meta.preBalances, post: tx.meta.postBalances, fee: tx.meta.fee, feePayer: keys[0], preTok: tb(tx.meta.preTokenBalances), postTok: tb(tx.meta.postTokenBalances) });
+            out.push({ keys, pre: tx.meta.preBalances, post: tx.meta.postBalances, fee: tx.meta.fee, feePayer: keys[0], preTok: tb(tx.meta.preTokenBalances), postTok: tb(tx.meta.postTokenBalances), opensPosition: (tx.meta.logMessages || []).some((l) => /Instruction: InitializePosition/.test(l)) });
             return;
           }
         } catch (e) {
