@@ -31,3 +31,21 @@ test("snapshot carries real bin shape to the card (changes after flip); renders 
   for (const binLiq of [liq, null])
     assert.equal(renderPnlCard({ pair: "A/SOL", position: "P", closed: true, depositUsd: 1, exitUsd: 1, feesUsd: 0, pnlUsd: 0, pnlPct: 0, duration: "1m", minPrice: 1, maxPrice: 1.1, candles, strategy: "Spot", binLiq } as never).subarray(1, 4).toString(), "PNG");
 });
+test("idealised fallback follows deposit side: SOL-only below price, token-only above; no double side", async () => {
+  const { sideOf } = await import("../src/telegram/pnl-send.js");
+  assert.equal(sideOf(0, 1), "sol");
+  assert.equal(sideOf(5, 0), "token");
+  assert.equal(sideOf(5, 1), "both");
+  const sol = idealBins("Bid-Ask", 1, 2, 1.5, 21, "sol");
+  assert.ok(sol.every((b) => b.x === 0 && b.y > 0));
+  assert.ok(sol[0].y > sol[20].y, "SOL BidAsk grows away from price (down)");
+  const tok = idealBins("Bid-Ask", 1, 2, 1.5, 21, "token");
+  assert.ok(tok.every((b) => b.y === 0 && b.x > 0));
+  assert.ok(tok[20].x > tok[0].x, "token BidAsk grows away from price (up)");
+  const spot = idealBins("Spot", 1, 2, 1.5, 21, "sol");
+  assert.ok(spot.every((b) => b.y === 1));
+});
+test("bucketBins uses mean so equal bins stay equal (no short last bar)", () => {
+  const bins = Array.from({ length: 69 }, (_, i) => ({ p: 1 + i / 100, x: 0, y: 3 }));
+  assert.ok(bucketBins(bins, 30).every((b) => b.y === 3));
+});

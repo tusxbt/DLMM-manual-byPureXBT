@@ -15,7 +15,7 @@ if (shape) {
   const lo = 0.0000112, hi = 0.0000112 * 1.004 ** 68;
   const cs = candles.map((k) => k.c);
   const a = Math.min(...cs), b = Math.max(...cs);
-  const end = shape === "bidask" ? 0.42 : 0.55;
+  const end = shape === "bidask" ? 1.02 : shape === "flip" ? -0.02 : shape === "curve" ? 0.5 : 0.55;
   for (const k of candles) {
     const f = (v: number) => lo * 1.1 + ((v - a) / (b - a)) * (hi * 0.93 - lo * 1.1);
     k.o = f(k.o); k.c = f(k.c); k.h = k.c * 1.004; k.l = k.c * 0.996;
@@ -29,10 +29,13 @@ const minP = 0.0000112;
 const binLiq = shape
   ? Array.from({ length: 69 }, (_, i) => {
       const pr = minP * 1.004 ** i;
-      const below = pr < p;
-      const da = Math.abs(Math.log(pr / p)) / Math.log(1.004 ** 68);
-      const w = shape === "bidask" ? 0.1 + 1.5 * da : 0.9 + 0.2 * Math.sin(i * 1.7);
-      return { p: pr, x: below ? 0 : w, y: below ? w : 0 };
+      const below = shape === "bidask" ? true : shape === "flip" ? false : pr < p; // one-sided: SOL-only / token-only
+      const ref = shape === "bidask" ? minP * 1.004 ** 69 : shape === "flip" ? minP / 1.004 : p;
+      const da = Math.abs(Math.log(pr / ref)) / Math.log(1.004 ** 68);
+      const w = shape === "bidask" || shape === "flip" ? 0.1 + 1.5 * da : shape === "curve" ? Math.exp(-((da * 3) ** 2)) : 1;
+      // Meteora spot: equal token amount per token bin, equal SOL per SOL bin
+      const amt = below ? w * 0.05 : w * 4000;
+      return { p: pr, x: below ? 0 : amt, y: below ? amt : 0 };
     })
   : null;
 const png = renderPnlCard({

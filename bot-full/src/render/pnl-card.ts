@@ -47,6 +47,8 @@ export type PnlCardData = {
   strategy?: string | null;
   /** real per-bin liquidity (price, X value, Y value — same units); null → idealised shape */
   binLiq?: Array<{ p: number; x: number; y: number }> | null;
+  /** which side holds liquidity, for the idealised fallback shape */
+  side?: "sol" | "token" | "both" | null;
   modal?: string | null;
   bins?: number | null;
   /** top-right pill, e.g. "MANUAL EXIT" / "ZAPOUT" */
@@ -98,9 +100,10 @@ export function strategyTag(s: string | null | undefined): string {
  * Idealised bins shape for a strategy when real bin data is missing.
  * Below active = SOL (y) side, above = token (x) side.
  */
-export function idealBins(strategy: string | null | undefined, minP: number, maxP: number, active: number | null | undefined, n = 40): Array<{ p: number; x: number; y: number }> {
+export function idealBins(strategy: string | null | undefined, minP: number, maxP: number, active: number | null | undefined, n = 40, side: "sol" | "token" | "both" | null = null): Array<{ p: number; x: number; y: number }> {
   const tag = strategyTag(strategy);
-  const a = active ?? (minP + maxP) / 2;
+  // single-sided: SOL-only sits below price (active = top edge), token-only above (active = bottom edge)
+  const a = side === "sol" ? maxP * 1.0001 : side === "token" ? minP * 0.9999 : active ?? (minP + maxP) / 2;
   const out: Array<{ p: number; x: number; y: number }> = [];
   const r = Math.pow(maxP / minP, 1 / Math.max(1, n - 1));
   for (let i = 0; i < n; i++) {
@@ -117,7 +120,7 @@ export function idealBins(strategy: string | null | undefined, minP: number, max
   return out;
 }
 
-/** Group bins into ≤ maxBars buckets (sum values, mean log price). */
+/** Group bins into ≤ maxBars equal-count buckets (mean amounts, so a partial last bucket isn't short). */
 export function bucketBins(bins: Array<{ p: number; x: number; y: number }>, maxBars = 60): Array<{ p0: number; p1: number; x: number; y: number }> {
   const s = bins.filter((b) => b.p > 0).sort((a, b) => a.p - b.p);
   if (!s.length) return [];
@@ -126,7 +129,7 @@ export function bucketBins(bins: Array<{ p: number; x: number; y: number }>, max
   for (let i = 0; i < s.length; i += per) {
     const g = s.slice(i, i + per);
     const next = s[i + per]?.p ?? g[g.length - 1].p * (g.length > 1 ? g[g.length - 1].p / g[g.length - 2].p : 1.001);
-    out.push({ p0: g[0].p, p1: next, x: g.reduce((a, b) => a + b.x, 0), y: g.reduce((a, b) => a + b.y, 0) });
+    out.push({ p0: g[0].p, p1: next, x: g.reduce((a, b) => a + b.x, 0) / g.length, y: g.reduce((a, b) => a + b.y, 0) / g.length });
   }
   return out;
 }
@@ -288,23 +291,40 @@ export function renderPnlCard(d: PnlCardData): Buffer {
     {
       const hx = cx + cw + 14, hw = 62;
       const real = d.binLiq && d.binLiq.length ? d.binLiq : null;
-      const src = real ?? (d.minPrice && d.maxPrice ? idealBins(d.strategy, d.minPrice, d.maxPrice, d.exitPrice ?? closes[closes.length - 1]) : []);
-      const bars = bucketBins(src, 60);
-      const maxV = Math.max(1e-18, ...bars.map((b) => b.x + b.y));
+      const src = real ?? (d.minPrice && d.maxPrice ? idealBins(d.strategy, d.minPrice, d.maxPrice, d.exitPrice ?? closes[closes.length - 1], 40, d.side ?? null) : []);
+      // integer pixel layout: uniform slots between the max-bin line (top) and min-bin line (bottom)
+      const yTopPx = Math.round(Y(d.maxPrice ?? src[src.length - 1]?.p ?? 1));
+      const yBotPx = Math.round(Y(d.minPrice ?? src[0]?.p ?? 1));
+      const span = Math.max(1, yBotPx - yTopPx);
+      const bars = bucketBins(src, Math.max(1, Math.min(60, Math.floor(span / 4))));
+      const n = bars.length;
+      const slot = span / Math.max(1, n);
+      const gap = slot >= 4 ? 1 : 0;
+      // Meteora-style: each side normalised to its own max → Spot is flat on both sides
+      const mx = Math.max(1e-18, ...bars.map((b) => b.x));
+      const my = Math.max(1e-18, ...bars.map((b) => b.y));
       const act = d.exitPrice ?? closes[closes.length - 1];
       ctx.fillStyle = "rgba(148,163,184,0.18)";
       ctx.fillRect(hx, cy, 1, ch);
-      for (const b of bars) {
-        const yTop = Y(b.p1), yBot = Y(b.p0);
-        const h = Math.max(1.5, Math.abs(yBot - yTop) - 1);
-        const y0 = Math.min(yTop, yBot) + 0.5;
-        const ly = (b.y / maxV) * hw, lx = (b.x / maxV) * hw;
+      bars.forEach((b, i) => {
+        // bars[0] = lowest price → bottom row
+        const r0 = Math.round(yBotPx - (i + 1) * slot);
+        const r1 = Math.round(yBotPx - i * slot);
+        const h = Math.max(1, r1 - r0 - gap);
         const isAct = act != null && act >= b.p0 && act < b.p1;
+        const ly = Math.round((b.y / my) * hw), lx = Math.round((b.x / mx) * hw);
+        if (isAct) {
+          ctx.fillStyle = "#fbbf24";
+          ctx.fillRect(hx + 2, r0, Math.max(3, lx, ly), h);
+          return;
+        }
+        const both = ly > 0 && lx > 0;
+        const fy = both ? Math.round(ly / 2) : ly, fx = both ? Math.round(lx / 2) : lx;
         ctx.fillStyle = isAct ? "#fbbf24" : "#2dd4bf"; // SOL (y) side
-        if (ly > 0) ctx.fillRect(hx + 1, y0, Math.max(1, ly), h);
+        if (fy > 0) ctx.fillRect(hx + 2, r0, fy, h);
         ctx.fillStyle = isAct ? "#fbbf24" : "#a78bfa"; // token (x) side
-        if (lx > 0) ctx.fillRect(hx + 1 + ly, y0, Math.max(1, lx), h);
-      }
+        if (fx > 0) ctx.fillRect(hx + 2 + fy, r0, fx, h);
+      });
       if (act != null) {
         const ya = Y(act);
         if (ya >= cy - 4 && ya <= cy + ch + 4) {

@@ -111,13 +111,13 @@ export type LivePosition = {
   max_bin?: number;
   amount_x?: number;
   amount_y?: number;
-  /** per-bin liquidity (price in SOL per token; x/y value in SOL terms) for the PnL card bins shape */
+  /** per-bin liquidity (price; raw token X amount, raw SOL Y amount) for the PnL card bins shape */
   bin_liq?: BinLiq[];
 };
 
 export type BinLiq = { p: number; x: number; y: number };
 
-/** positionBinData → [{price, X value (in Y units), Y value}] sorted by price. */
+/** positionBinData → [{price, X amount, Y amount}] sorted by price. */
 export function binLiqFrom(data: unknown[] | undefined, binStep: number | undefined, decX: number, decY: number): BinLiq[] | undefined {
   if (!Array.isArray(data) || !binStep) return undefined;
   const out: BinLiq[] = [];
@@ -128,7 +128,7 @@ export function binLiqFrom(data: unknown[] | undefined, binStep: number | undefi
     const x = Number(String(b.positionXAmount ?? "0")) / 10 ** decX;
     const y = Number(String(b.positionYAmount ?? "0")) / 10 ** decY;
     if (!Number.isFinite(p) || p <= 0) continue;
-    out.push({ p, x: x * p, y });
+    out.push({ p, x, y }); // raw amounts per side (Meteora-style display normalises each side)
   }
   return out.length ? out.sort((a, b) => a.p - b.p) : undefined;
 }
