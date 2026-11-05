@@ -38,6 +38,9 @@ export type RealizedOut = {
   feeSol: number;
   exitUsd: number | null;
   pnlUsd: number | null;
+  exitSol?: number | null;
+  depositSol?: number | null;
+  pnlSol?: number | null;
   pnlPct: number | null;
 };
 
@@ -84,6 +87,21 @@ export function kstStamp(d = new Date()): string {
 }
 
 export function cardDataFromSnapshot(s: PositionSnapshot, closed: boolean, now = new Date()): PnlCardData {
+  // closed: on-chain realized (close + swap txs) wins — Meteora values withdrawn tokens at market
+  // and so ignores swap loss/slippage.
+  const r0 = closed ? s.realized : null;
+  if (r0 && r0.pnlUsd != null) {
+    return {
+      ...ownCard(s, closed, now),
+      depositUsd: s.meteora?.depositUsd ?? ownCard(s, closed, now).depositUsd,
+      exitUsd: r0.exitUsd,
+      feesUsd: s.meteora?.feesUsd ?? ownCard(s, closed, now).feesUsd,
+      pnlUsd: r0.pnlUsd,
+      pnlPct: r0.pnlPct,
+      modal: r0.depositSol ? `${+r0.depositSol.toFixed(4)} SOL` : null,
+      source: "realized",
+    };
+  }
   const m = s.meteora;
   if (m && m.pnlUsd != null) {
     const exitM = closed

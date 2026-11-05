@@ -1,4 +1,4 @@
-import { realizedFromFlows, realizedUsd, fetchFlows } from "../engine/realized.js";
+import { realizedFromFlows, realizedSol, fetchFlows } from "../engine/realized.js";
 import type { RealizedOut } from "./pnl-send.js";
 import { registerPnlBgUi } from "./pnl-bg.js";
 import { poolBlock } from "./pool-format.js";
@@ -385,8 +385,9 @@ async function computeRealized(sigs: string[], snap?: PositionSnapshot): Promise
   }
   const mints = Object.keys(r.tokenNet);
   const prices = mints.length ? await getUsdPrices(mints).catch(() => ({}) as Record<string, number>) : {};
-  const deposit = snap?.meteora?.depositUsd ?? (snap?.cost_usd && snap.cost_usd > 0 ? snap.cost_usd : null);
-  return { ...r, ...realizedUsd(r, solUsd, prices, deposit) };
+  const depUsd = snap?.meteora?.depositUsd ?? (snap?.cost_usd && snap.cost_usd > 0 ? snap.cost_usd : null);
+  const depSol = snap?.amount_sol && snap.amount_sol > 0 ? snap.amount_sol : depUsd != null && solUsd ? depUsd / solUsd : null;
+  return { ...r, ...realizedSol(r, solUsd, prices, depSol) };
 }
 
 async function runClose(ctx: Context, req: ConfirmRequest, statusMsgId?: number): Promise<CloseOutcome> {
@@ -408,7 +409,7 @@ async function runClose(ctx: Context, req: ConfirmRequest, statusMsgId?: number)
     });
     markConfirm(id, result.success ? "executed" : "failed", result.message);
     const ms = Date.now() - t0;
-    const realized = result.success ? await computeRealized(result.signatures || [], snap).catch(() => null) : null;
+    const realized = (result.signatures || []).length ? await computeRealized(result.signatures || [], snap).catch(() => null) : null;
     outcome = { kind, pair, success: result.success, signatures: result.signatures || [], message: result.message, error: result.error, ms, realized, snapshot: snap ? { ...snap, realized } : snap };
     if (result.success && kind === "remove") removeTrackedPosition(String(req.payload.position));
   } catch (e) {

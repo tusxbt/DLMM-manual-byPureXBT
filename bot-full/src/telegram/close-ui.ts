@@ -66,11 +66,13 @@ export function compactResult(o: CloseOutcome): string {
   const m = s?.meteora && s.meteora.pnlUsd != null ? s.meteora : null;
   let pnl: string;
   let src = "";
-  if (m) {
+  const r = o.realized;
+  if (r?.pnlUsd != null) {
+    pnl = pnlLine(r.pnlUsd, r.pnlPct);
+    src = "on-chain, tanpa rent";
+  } else if (m) {
     pnl = pnlLine(m.pnlUsd, m.pnlPct);
-  } else if (o.realized?.pnlUsd != null) {
-    pnl = pnlLine(o.realized.pnlUsd, o.realized.pnlPct);
-    src = "realized, tanpa rent";
+    src = "Meteora";
   } else {
     const exitUsd = s?.total_value_usd == null ? null : s.total_value_usd + (s.unclaimed_fees_usd ?? 0);
     if (s?.cost_usd && s.cost_usd > 0 && exitUsd != null) {
@@ -85,8 +87,9 @@ export function compactResult(o: CloseOutcome): string {
   return [
     `✅ **${name}**${dry ? " 🧪" : ""}`,
     kv("PnL", pnl),
+    o.realized?.pnlSol != null && src.startsWith("on-chain") ? kv("PnL SOL", `${o.realized.pnlSol >= 0 ? "+" : "−"}${Math.abs(o.realized.pnlSol).toFixed(4)}`) : null,
     src ? kv("Sumber", src) : null,
-    o.realized && !src.startsWith("realized") && o.realized.pnlUsd != null ? kv("Realized", pnlLine(o.realized.pnlUsd, o.realized.pnlPct)) : null,
+    m && src.startsWith("on-chain") ? kv("Meteora", pnlLine(m.pnlUsd, m.pnlPct)) : null,
     o.realized ? kv("Diterima", `${o.realized.solNet.toFixed(4)} SOL${Object.keys(o.realized.tokenNet).length ? " +tkn" : ""}`) : null,
     kv("Waktu", `${(o.ms / 1000).toFixed(1)}s`),
     last ? `[🧾 Tx Solscan](https://solscan.io/tx/${last})${real.length > 1 ? ` +${real.length - 1}` : ""}` : null,

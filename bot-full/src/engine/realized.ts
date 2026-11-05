@@ -96,6 +96,39 @@ export function realizedUsd(r: Realized, solUsd: number | null, prices: Record<s
   return { exitUsd: exit, pnlUsd: pnl, pnlPct: (pnl / depositUsd) * 100 };
 }
 
+/**
+ * SOL-denominated realized PnL (what actually landed in the wallet, rent & tx fee excluded):
+ * exitSol = solNet (close + swap txs) + leftover tokens valued at market in SOL.
+ * depositSol = SOL put in (tracked amount_sol), else deposit USD / SOL price.
+ * USD = pnlSol × current SOL price.
+ */
+export function realizedSol(
+  r: Realized,
+  solUsd: number | null,
+  prices: Record<string, number | null | undefined>,
+  depositSol: number | null,
+): { exitSol: number | null; depositSol: number | null; pnlSol: number | null; exitUsd: number | null; pnlUsd: number | null; pnlPct: number | null } {
+  let exitSol: number | null = r.solNet;
+  for (const [m, amt] of Object.entries(r.tokenNet)) {
+    const p = prices[m];
+    if (p == null || solUsd == null || !(solUsd > 0)) {
+      exitSol = null;
+      break;
+    }
+    exitSol += (amt * p) / solUsd;
+  }
+  const dep = depositSol != null && depositSol > 0 ? depositSol : null;
+  const pnlSol = exitSol != null && dep != null ? exitSol - dep : null;
+  return {
+    exitSol,
+    depositSol: dep,
+    pnlSol,
+    exitUsd: exitSol != null && solUsd != null ? exitSol * solUsd : null,
+    pnlUsd: pnlSol != null && solUsd != null ? pnlSol * solUsd : null,
+    pnlPct: pnlSol != null && dep ? (pnlSol / dep) * 100 : null,
+  };
+}
+
 /** Fetch landed txs (parsed) and convert to flows. Missing txs are skipped (logged). */
 export async function fetchFlows(signatures: string[]): Promise<TxFlow[]> {
   const conn = getConnection();

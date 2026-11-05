@@ -12,7 +12,7 @@ test("compact close result is 2-3 lines with single tx link", () => {
   assert.match(lines[0], /✅ \*\*Exit AMD\/SOL\*\*/);
   // realized (from close txs, rent excluded) beats the snapshot estimate
   assert.match(t, /PnL: 🟢 \+\$1\.20 \(\+2\.45%\)/);
-  assert.match(t, /Sumber: realized, tanpa rent/);
+  assert.match(t, /Sumber: on-chain, tanpa rent/);
   assert.match(t, /Diterima: 0\.5120 SOL/);
   assert.match(t, /Waktu: 3\.0s/);
   assert.match(lines.at(-1)!, /solscan\.io\/tx\/c3/);
