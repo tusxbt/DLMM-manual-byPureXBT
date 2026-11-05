@@ -162,61 +162,6 @@ const money = (n: number | null | undefined, sign = false) =>
     ? "n/a"
     : `${sign ? (n >= 0 ? "+" : "-") : n < 0 ? "-" : ""}$${Math.abs(n).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
-/** Up: hollow light body; Down: filled dark gray. Thin gray wicks. No green/red — matches B&W manga card BGs. */
-export const CANDLE_UP = "#e8e8e8";
-export const CANDLE_DOWN = "#3a3a3a";
-export const CANDLE_WICK = "rgba(180,180,180,0.55)";
-export const CANDLE_OUTLINE = "rgba(220,220,220,0.55)";
-export function drawCandles(
-  ctx: SKRSContext2D,
-  candles: Array<{ o: number; h: number; l: number; c: number }>,
-  cx: number, cw: number, cy: number, ch: number,
-  Y: (v: number) => number,
-  X: (i: number) => number,
-): void {
-  // very subtle gray grid
-  ctx.save();
-  ctx.strokeStyle = "rgba(160,160,160,0.12)";
-  ctx.lineWidth = 1;
-  for (let i = 0; i <= 4; i++) {
-    const y = cy + (ch * i) / 4;
-    ctx.beginPath(); ctx.moveTo(cx, y); ctx.lineTo(cx + cw, y); ctx.stroke();
-  }
-  ctx.restore();
-  const n = candles.length;
-  const slot = n > 1 ? cw / (n - 1) : cw;
-  const bodyW = Math.max(2, Math.min(10, slot * 0.55));
-  candles.forEach((k, i) => {
-    const x = X(i);
-    const up = k.c >= k.o;
-    const yO = Y(k.o), yC = Y(k.c), yH = Y(k.h), yL = Y(k.l);
-    // thin gray wick
-    ctx.strokeStyle = CANDLE_WICK;
-    ctx.lineWidth = 1;
-    ctx.beginPath();
-    ctx.moveTo(x, yH);
-    ctx.lineTo(x, yL);
-    ctx.stroke();
-    // body: up = hollow light, down = filled dark
-    const top = Math.min(yO, yC), bot = Math.max(yO, yC);
-    const h = Math.max(1.5, bot - top);
-    const bx = x - bodyW / 2;
-    if (up) {
-      ctx.fillStyle = "rgba(232,232,232,0.18)";
-      ctx.fillRect(bx, top, bodyW, h);
-      ctx.strokeStyle = CANDLE_UP;
-      ctx.lineWidth = 1.2;
-      ctx.strokeRect(bx + 0.5, top + 0.5, bodyW - 1, h - 1);
-    } else {
-      ctx.fillStyle = CANDLE_DOWN;
-      ctx.fillRect(bx, top, bodyW, h);
-      ctx.strokeStyle = CANDLE_OUTLINE;
-      ctx.lineWidth = 1;
-      ctx.strokeRect(bx + 0.5, top + 0.5, bodyW - 1, h - 1);
-    }
-  });
-}
-
 export function renderPnlCard(d: PnlCardData): Buffer {
   ensureFonts();
   ensureThin();
@@ -266,7 +211,7 @@ export function renderPnlCard(d: PnlCardData): Buffer {
   center(money(d.pnlUsd, true), 330, 36, col, numf);
   center(d.source === "Meteora" ? "PnL · Meteora" : d.source === "realized" ? "PnL realized · tanpa rent & fee tx" : "PnL estimasi", 368, 16, MUTED);
 
-  // full-width minimal area chart
+  // full-width monochrome line chart
   const cx = 70, cw = W - 140, cy = 410, ch = 170;
   const candles = d.candles || [];
   if (candles.length >= 2) {
@@ -303,15 +248,30 @@ export function renderPnlCard(d: PnlCardData): Buffer {
         ctx.textAlign = "left";
       }
     }
-    // dark-mode candlesticks — real OHLC from GeckoTerminal (never synthesized from closes alone)
-    drawCandles(ctx, candles, cx, cw, cy, ch, Y, X);
+    // monochrome line chart (closes) — light gray/white for B&W manga backgrounds
+    const line = "rgba(232,232,232,0.92)";
+    const area = ctx.createLinearGradient(0, cy, 0, cy + ch);
+    area.addColorStop(0, "rgba(232,232,232,0.18)");
+    area.addColorStop(1, "rgba(232,232,232,0)");
+    ctx.beginPath();
+    closes.forEach((v, i) => (i ? ctx.lineTo(X(i), Y(v)) : ctx.moveTo(X(i), Y(v))));
+    ctx.lineTo(X(closes.length - 1), cy + ch);
+    ctx.lineTo(X(0), cy + ch);
+    ctx.closePath();
+    ctx.fillStyle = area;
+    ctx.fill();
+    ctx.beginPath();
+    closes.forEach((v, i) => (i ? ctx.lineTo(X(i), Y(v)) : ctx.moveTo(X(i), Y(v))));
+    ctx.strokeStyle = line;
+    ctx.lineWidth = 2.4;
+    ctx.lineJoin = "round";
+    ctx.stroke();
     const dot = (x: number, y: number, fill: string, label: string, right: boolean) => {
       ctx.beginPath(); ctx.arc(x, y, 5, 0, Math.PI * 2); ctx.fillStyle = fill; ctx.fill();
       ctx.lineWidth = 1.5; ctx.strokeStyle = "#0b0f14"; ctx.stroke();
       thin(ctx, 12); ctx.fillStyle = MUTED; ctx.textAlign = right ? "right" : "left";
       ctx.fillText(label, x + (right ? -10 : 10), y - 9); ctx.textAlign = "left";
     };
-    // entry/exit aligned to the candle whose time covers the timestamp (fallback: edges)
     const idxAt = (sec?: number) => {
       if (sec == null || !candles.length) return 0;
       let best = 0;
@@ -321,12 +281,12 @@ export function renderPnlCard(d: PnlCardData): Buffer {
     const ei = d.entryTime != null ? idxAt(d.entryTime) : 0;
     const xi = d.closed ? (d.exitTime != null ? idxAt(d.exitTime) : candles.length - 1) : -1;
     dot(X(ei), Y(d.entryPrice ?? candles[ei].c), TEXT, "entry", false);
-    if (xi >= 0) dot(X(xi), Y(d.exitPrice ?? candles[xi].c), col, "exit", true);
+    if (xi >= 0) dot(X(xi), Y(d.exitPrice ?? candles[xi].c), TEXT, "exit", true);
   } else {
     center("chart tidak tersedia", cy + ch / 2, 16, MUTED);
   }
 
-  // stats: single row of 6
+  // stats row (Status removed)
   const stats: Array<[string, string, string]> = [
     ["Modal", d.modal || money(d.depositUsd), TEXT],
     [d.closed ? "Exit" : "Nilai", money(d.exitUsd), TEXT],
