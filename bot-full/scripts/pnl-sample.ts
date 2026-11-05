@@ -24,24 +24,11 @@ if (shape) {
   last.c = lo + (hi - lo) * end;
   p = last.c;
 }
-// realistic per-bin liquidity (69 bins, step 0.4%): value in SOL terms
 const minP = 0.0000112;
-const binLiq = shape
-  ? Array.from({ length: 69 }, (_, i) => {
-      const pr = minP * 1.004 ** i;
-      const below = shape === "bidask" ? true : shape === "flip" ? false : pr < p; // one-sided: SOL-only / token-only
-      const ref = shape === "bidask" ? minP * 1.004 ** 69 : shape === "flip" ? minP / 1.004 : p;
-      const da = Math.abs(Math.log(pr / ref)) / Math.log(1.004 ** 68);
-      const w = shape === "bidask" || shape === "flip" ? 0.1 + 1.5 * da : shape === "curve" ? Math.exp(-((da * 3) ** 2)) : 1;
-      // Meteora spot: equal token amount per token bin, equal SOL per SOL bin
-      const amt = below ? w * 0.05 : w * 4000;
-      return { p: pr, x: below ? 0 : amt, y: below ? amt : 0 };
-    })
-  : null;
 const png = renderPnlCard({
   pair: "RAM/SOL", position: "7b9f6yDvVthv3BXDL6isBWe8gcrbjBVvXrJz7yKV1tcg", closed: true,
   depositUsd: 552.12, exitUsd: loss ? 510.82 : 629.02, feesUsd: loss ? 3.12 : 76.45, pnlUsd: loss ? -41.3 : 76.9, pnlPct: loss ? -7.48 : 13.93,
-  duration: "4j 12m", minPrice: 0.0000112, maxPrice: shape ? minP * 1.004 ** 68 : 0.0000146, binLiq, exitPrice: p, candles,
+  duration: "4j 12m", minPrice: 0.0000112, maxPrice: shape ? minP * 1.004 ** 68 : 0.0000146, exitPrice: p, candles,
   timeLabel: "05 Nov 2026 01:10 KST", source: "Meteora", strategy: process.argv[4] ?? "Mix 70/30", bins: 69, exitLabel: loss ? "MANUAL EXIT" : "ZAPOUT",
 });
 fs.writeFileSync(process.argv[2] || "sample-pnl.png", png);
