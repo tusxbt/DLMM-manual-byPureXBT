@@ -162,6 +162,61 @@ const money = (n: number | null | undefined, sign = false) =>
     ? "n/a"
     : `${sign ? (n >= 0 ? "+" : "-") : n < 0 ? "-" : ""}$${Math.abs(n).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
+/** Up: hollow light body; Down: filled dark gray. Thin gray wicks. No green/red — matches B&W manga card BGs. */
+export const CANDLE_UP = "#e8e8e8";
+export const CANDLE_DOWN = "#3a3a3a";
+export const CANDLE_WICK = "rgba(180,180,180,0.55)";
+export const CANDLE_OUTLINE = "rgba(220,220,220,0.55)";
+export function drawCandles(
+  ctx: SKRSContext2D,
+  candles: Array<{ o: number; h: number; l: number; c: number }>,
+  cx: number, cw: number, cy: number, ch: number,
+  Y: (v: number) => number,
+  X: (i: number) => number,
+): void {
+  // very subtle gray grid
+  ctx.save();
+  ctx.strokeStyle = "rgba(160,160,160,0.12)";
+  ctx.lineWidth = 1;
+  for (let i = 0; i <= 4; i++) {
+    const y = cy + (ch * i) / 4;
+    ctx.beginPath(); ctx.moveTo(cx, y); ctx.lineTo(cx + cw, y); ctx.stroke();
+  }
+  ctx.restore();
+  const n = candles.length;
+  const slot = n > 1 ? cw / (n - 1) : cw;
+  const bodyW = Math.max(2, Math.min(10, slot * 0.55));
+  candles.forEach((k, i) => {
+    const x = X(i);
+    const up = k.c >= k.o;
+    const yO = Y(k.o), yC = Y(k.c), yH = Y(k.h), yL = Y(k.l);
+    // thin gray wick
+    ctx.strokeStyle = CANDLE_WICK;
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(x, yH);
+    ctx.lineTo(x, yL);
+    ctx.stroke();
+    // body: up = hollow light, down = filled dark
+    const top = Math.min(yO, yC), bot = Math.max(yO, yC);
+    const h = Math.max(1.5, bot - top);
+    const bx = x - bodyW / 2;
+    if (up) {
+      ctx.fillStyle = "rgba(232,232,232,0.18)";
+      ctx.fillRect(bx, top, bodyW, h);
+      ctx.strokeStyle = CANDLE_UP;
+      ctx.lineWidth = 1.2;
+      ctx.strokeRect(bx + 0.5, top + 0.5, bodyW - 1, h - 1);
+    } else {
+      ctx.fillStyle = CANDLE_DOWN;
+      ctx.fillRect(bx, top, bodyW, h);
+      ctx.strokeStyle = CANDLE_OUTLINE;
+      ctx.lineWidth = 1;
+      ctx.strokeRect(bx + 0.5, top + 0.5, bodyW - 1, h - 1);
+    }
+  });
+}
+
 export function renderPnlCard(d: PnlCardData): Buffer {
   ensureFonts();
   ensureThin();
@@ -212,12 +267,12 @@ export function renderPnlCard(d: PnlCardData): Buffer {
   center(d.source === "Meteora" ? "PnL · Meteora" : d.source === "realized" ? "PnL realized · tanpa rent & fee tx" : "PnL estimasi", 368, 16, MUTED);
 
   // full-width minimal area chart
-  const cx = 70, cw = W - 140, cy = 410, ch = 170;
+  const cx = 70, cw = W - 160, cy = 410, ch = 170;
   const candles = d.candles || [];
   if (candles.length >= 2) {
     const closes = candles.map((k) => k.c);
-    const vals = [...closes];
-    for (const v of [d.minPrice, d.maxPrice]) if (v && v > 0) vals.push(v);
+    const vals = [...closes, ...candles.map((k) => k.h), ...candles.map((k) => k.l)];
+    for (const v of [d.minPrice, d.maxPrice, d.entryPrice, d.exitPrice]) if (v && v > 0) vals.push(v);
     let lo = Math.min(...vals), hi = Math.max(...vals);
     if (hi - lo < hi * 1e-6) { hi *= 1.01; lo *= 0.99; }
     const useLog = hi / lo > 5;
@@ -248,45 +303,48 @@ export function renderPnlCard(d: PnlCardData): Buffer {
         ctx.textAlign = "left";
       }
     }
-    const area = ctx.createLinearGradient(0, cy, 0, cy + ch);
-    area.addColorStop(0, `rgba(${rgb},0.22)`);
-    area.addColorStop(1, `rgba(${rgb},0)`);
-    ctx.beginPath();
-    closes.forEach((v, i) => (i ? ctx.lineTo(X(i), Y(v)) : ctx.moveTo(X(i), Y(v))));
-    ctx.lineTo(X(closes.length - 1), cy + ch);
-    ctx.lineTo(X(0), cy + ch);
-    ctx.closePath();
-    ctx.fillStyle = area;
-    ctx.fill();
-    ctx.beginPath();
-    closes.forEach((v, i) => (i ? ctx.lineTo(X(i), Y(v)) : ctx.moveTo(X(i), Y(v))));
-    ctx.strokeStyle = col;
-    ctx.lineWidth = 2.5;
-    ctx.lineJoin = "round";
-    ctx.stroke();
+    // dark-mode candlesticks — real OHLC from GeckoTerminal (never synthesized from closes alone)
+    drawCandles(ctx, candles, cx, cw, cy, ch, Y, X);
+    // vertical strategy tag on the right of the chart
+    {
+      const tag = strategyTag(d.strategy);
+      thin(ctx, 12);
+      ctx.save();
+      ctx.fillStyle = "rgba(148,163,184,0.7)";
+      ctx.translate(cx + cw + 18, cy + ch / 2);
+      ctx.rotate(-Math.PI / 2);
+      ctx.textAlign = "center";
+      ctx.fillText(tag, 0, 0);
+      ctx.restore();
+    }
     const dot = (x: number, y: number, fill: string, label: string, right: boolean) => {
-      ctx.beginPath(); ctx.arc(x, y, 6, 0, Math.PI * 2); ctx.fillStyle = fill; ctx.fill();
-      ctx.lineWidth = 2; ctx.strokeStyle = "#0b0f14"; ctx.stroke();
-      thin(ctx, 13); ctx.fillStyle = MUTED; ctx.textAlign = right ? "right" : "left";
-      ctx.fillText(label, x + (right ? -12 : 12), y - 10); ctx.textAlign = "left";
+      ctx.beginPath(); ctx.arc(x, y, 5, 0, Math.PI * 2); ctx.fillStyle = fill; ctx.fill();
+      ctx.lineWidth = 1.5; ctx.strokeStyle = "#0b0f14"; ctx.stroke();
+      thin(ctx, 12); ctx.fillStyle = MUTED; ctx.textAlign = right ? "right" : "left";
+      ctx.fillText(label, x + (right ? -10 : 10), y - 9); ctx.textAlign = "left";
     };
-    dot(X(0), Y(d.entryPrice ?? closes[0]), TEXT, "entry", false);
-    if (d.closed) dot(X(closes.length - 1), Y(d.exitPrice ?? closes[closes.length - 1]), col, "exit", true);
+    // entry/exit aligned to the candle whose time covers the timestamp (fallback: edges)
+    const idxAt = (sec?: number) => {
+      if (sec == null || !candles.length) return 0;
+      let best = 0;
+      for (let i = 0; i < candles.length; i++) if (candles[i].t <= sec) best = i;
+      return best;
+    };
+    const ei = d.entryTime != null ? idxAt(d.entryTime) : 0;
+    const xi = d.closed ? (d.exitTime != null ? idxAt(d.exitTime) : candles.length - 1) : -1;
+    dot(X(ei), Y(d.entryPrice ?? candles[ei].c), TEXT, "entry", false);
+    if (xi >= 0) dot(X(xi), Y(d.exitPrice ?? candles[xi].c), col, "exit", true);
   } else {
     center("chart tidak tersedia", cy + ch / 2, 16, MUTED);
   }
 
   // stats: single row of 6
-  const last = candles.length ? candles[candles.length - 1].c : null;
-  const px = d.exitPrice ?? last;
-  const inR = px != null && d.minPrice != null && d.maxPrice != null ? px >= d.minPrice && px <= d.maxPrice : null;
   const stats: Array<[string, string, string]> = [
     ["Modal", d.modal || money(d.depositUsd), TEXT],
     [d.closed ? "Exit" : "Nilai", money(d.exitUsd), TEXT],
     ["Fees", money(d.feesUsd), d.feesUsd != null && d.feesUsd > 0 ? UP : TEXT],
     ["Durasi", d.duration ?? "n/a", TEXT],
     ["Bins", d.bins != null ? String(d.bins) : "n/a", TEXT],
-    ["Status", inR == null ? "n/a" : inR ? "in range" : "out", inR == null ? TEXT : inR ? UP : DOWN],
   ];
   const sw = (W - 140) / stats.length;
   stats.forEach(([k, v, cl], i) => {
