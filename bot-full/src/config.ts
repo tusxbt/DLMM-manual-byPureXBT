@@ -3,7 +3,8 @@ import fs from "node:fs";
 import path from "node:path";
 import { PublicKey } from "@solana/web3.js";
 import { getWallet, getWalletPublicKey, resetWalletForTests } from "./engine/wallet.js";
-import { scopedNonOwner } from "./users/context.js";
+import { parseRpcUrls } from "./engine/rpc-failover.js";
+import { scopedNonOwner} from "./users/context.js";
 import { walletPubkeyOf } from "./users/store.js";
 
 export type AppConfig = {
@@ -12,6 +13,8 @@ export type AppConfig = {
   allowedUserIds: Set<string>;
   walletPublicKey: PublicKey;
   rpcUrl: string;
+  /** Ordered RPC endpoints (RPC_URLS or [RPC_URL]). */
+  rpcUrls: string[];
   heliusApiKey: string | null;
   jupiterApiKey: string | null;
   dataDir: string;
@@ -101,9 +104,15 @@ function loadBaseConfig(opts?: { requireTelegram?: boolean; skipWallet?: boolean
     process.exit(1);
   }
 
-  const rpcUrl = requireTelegram
-    ? requireEnv("RPC_URL")
-    : process.env.RPC_URL?.trim() || "https://api.mainnet-beta.solana.com";
+  const singleRpc = requireTelegram
+    ? (process.env.RPC_URL?.trim() || "")
+    : (process.env.RPC_URL?.trim() || "https://api.mainnet-beta.solana.com");
+  if (requireTelegram && !process.env.RPC_URLS?.trim() && !singleRpc) {
+    // preserve old requireEnv behaviour when neither is set
+    requireEnv("RPC_URL");
+  }
+  const rpcUrls = parseRpcUrls(process.env.RPC_URLS, singleRpc || undefined);
+  const rpcUrl = rpcUrls[0]!;
 
   let walletPublicKey: PublicKey;
   if (opts?.skipWallet) {
@@ -131,6 +140,7 @@ function loadBaseConfig(opts?: { requireTelegram?: boolean; skipWallet?: boolean
     allowedUserIds,
     walletPublicKey,
     rpcUrl,
+    rpcUrls,
     heliusApiKey: process.env.HELIUS_API_KEY?.trim() || null,
     jupiterApiKey: process.env.JUPITER_API_KEY?.trim() || null,
     dataDir: process.env.DATA_DIR?.trim() || "./data",

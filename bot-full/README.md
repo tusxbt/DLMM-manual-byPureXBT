@@ -107,7 +107,8 @@ nano .env   # isi sendiri — jangan paste key ke chat
 | `TELEGRAM_CHAT_ID` | ✅ | Chat id kamu |
 | `ALLOWED_TELEGRAM_USER_IDS` | ✅ | Whitelist user id (koma) |
 | `WALLET_PRIVATE_KEY` | ✅ | base58 secret — **wallet terpisah dana kecil** |
-| `RPC_URL` | ✅ | RPC mainnet (Helius dll) |
+| `RPC_URL` | ✅* | RPC mainnet (Helius dll). *Opsional jika `RPC_URLS` diisi |
+| `RPC_URLS` |  | Daftar RPC failover dipisah koma. Kosong → pakai `RPC_URL`. Saat 429/timeout/5xx bot pindah ke RPC berikutnya (cooldown ~45s). Log hanya `rpc#N`, tanpa URL/key |
 | `DRY_RUN` | | default `true` |
 | `HELIUS_API_KEY` / `JUPITER_API_KEY` | | opsional |
 

@@ -2,19 +2,36 @@ import { Connection, PublicKey, LAMPORTS_PER_SOL } from "@solana/web3.js";
 import { loadConfig, USDC_MINT } from "../config.js";
 import { log } from "../logger.js";
 import { getWalletPublicKey } from "./wallet.js";
+import { RpcFailover, parseRpcUrls, RPC_COOLDOWN_MS } from "./rpc-failover.js";
 
 let _conn: Connection | null = null;
+let _failover: RpcFailover | null = null;
+
+/** Test / ops: replace the pool (never log URLs). */
+export function getRpcFailover(): RpcFailover | null {
+  return _failover;
+}
 
 export function getConnection(): Connection {
   if (!_conn) {
     const cfg = loadConfig({ requireTelegram: false, skipWallet: true });
-    _conn = new Connection(cfg.rpcUrl, "confirmed");
+    const urls = cfg.rpcUrls?.length ? cfg.rpcUrls : parseRpcUrls(undefined, cfg.rpcUrl);
+    _failover = new RpcFailover(urls, { cooldownMs: RPC_COOLDOWN_MS });
+    // Endpoint string is the primary; custom fetch rewrites to the current healthy RPC.
+    // disableRetryOnRateLimit: we handle 429 ourselves via failover.
+    _conn = new Connection(urls[0]!, {
+      commitment: "confirmed",
+      disableRetryOnRateLimit: true,
+      fetch: (input, init) => _failover!.fetch(input, init),
+    });
+    if (urls.length > 1) log("rpc", `${urls.length} endpoints · active ${_failover.label()}`);
   }
   return _conn;
 }
 
 export function resetConnection(): void {
   _conn = null;
+  _failover = null;
 }
 
 export type BalanceSnapshot = {
