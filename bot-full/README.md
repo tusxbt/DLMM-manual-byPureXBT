@@ -1,4 +1,4 @@
-# DLMM Bot Full — Telegram Meteora DLMM (self-signing)
+# Tusvicious — Telegram Meteora DLMM bot (self-signing)
 
 Bot self-host untuk deploy / claim / remove / swap posisi [Meteora DLMM](https://app.meteora.ag/) lewat Telegram.
 

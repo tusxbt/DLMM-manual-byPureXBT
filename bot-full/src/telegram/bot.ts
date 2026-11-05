@@ -65,7 +65,7 @@ async function replyMenu(ctx: Context, text?: string): Promise<void> {
   resetSession(chatKey(ctx));
   const cfg = loadConfig({ requireTelegram: false, skipWallet: true });
   const mode = cfg.dryRun ? "🧪 DRY_RUN (simulasi)" : "⚠️ LIVE (on-chain)";
-  await ctx.reply(text || `🏠 **DLMM Bot**\n${mode}\n\nPaste CA token untuk buka posisi, atau pilih aksi:`, {
+  await ctx.reply(text || `🏠 **Tusvicious**\n${mode}\n\nPaste CA token untuk buka posisi, atau pilih aksi:`, {
     reply_markup: mainMenuKeyboard(),
   });
 }

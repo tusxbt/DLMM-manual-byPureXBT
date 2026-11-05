@@ -201,7 +201,7 @@ export function renderPnlCard(d: PnlCardData): Buffer {
     ctx.textAlign = "left";
   };
   // brand + pair line
-  center("DLMM BOSKU", 78, 16, MUTED, semi);
+  center("TUSVICIOUS", 78, 16, MUTED, semi);
   const pairLine = [d.pair.replace("-", "/"), d.strategy].filter(Boolean).join("  ·  ");
   center(pairLine, 128, 28, TEXT, semi);
 

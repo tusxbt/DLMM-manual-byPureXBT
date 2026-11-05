@@ -42,7 +42,7 @@ async function main() {
   ];
   const picker = ["**🏊 Pilih pool DLMM**", pools.map((p, i) => poolBlock(p, i)).join("\n")].join("\n\n");
   const blocks: [string, string][] = [["Pool picker (+ 1 button per pool)", picker], ["/add panel (+ buttons)", panel], ["/add Preview (wide, new bin arrays)", preview], ["Position card", renderPositionCard(card as never, now)], ["Positions list (+ 1 button per posisi)", list], ["Close / Zapout result (+ ℹ️ Detail button)", close], ["Close error", closeErr], ["Wallet", wallet], ["Admin", adminText()], ["Settings", settingsText()]];
-  const md = ["# DLMM bot — UI samples", "", "`**x**` = bold, backtick = tap-to-copy. Max line excludes addresses (own line).", ""];
+  const md = ["# Tusvicious — UI samples", "", "`**x**` = bold, backtick = tap-to-copy. Max line excludes addresses (own line).", ""];
   for (const [t, b] of blocks) {
     const lens = b.split("\n").filter((l) => !/^`[1-9A-HJ-NP-Za-km-z]{32,44}`$/.test(l.trim())).map((l) => l.replace(/\[(.*?)\]\(.*?\)/g, "$1").replace(/\*\*|`/g, "").length);
     md.push(`## ${t}`, "", `_max line: ${Math.max(...lens)} chars_`, "", "```", b, "```", "");

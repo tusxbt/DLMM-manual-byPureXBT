@@ -56,7 +56,7 @@ export async function showWallet(ctx: Context): Promise<void> {
 }
 
 export const ONBOARD_TEXT = [
-  "👋 **Selamat datang di DLMM bot!**",
+  "👋 **Selamat datang di Tusvicious!**",
   "Owner sudah memberi kamu akses.",
   "",
   "Langkah 1: tekan 🆕 Buat wallet — wallet baru dibuat & dienkripsi di server, lalu deposit SOL ke alamatnya.",

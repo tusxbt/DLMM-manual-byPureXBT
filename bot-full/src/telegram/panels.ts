@@ -319,7 +319,7 @@ export function registerAddPanel(bot: Bot): void {
     await ctx.answerCallbackQuery();
     resetSession(key(ctx));
     const cfg = loadConfig({ requireTelegram: false, skipWallet: true });
-    await ctx.editMessageText(`🏠 DLMM Bot — ${cfg.dryRun ? "🧪 DRY_RUN" : "⚠️ LIVE"}\nPilih aksi:`, {
+    await ctx.editMessageText(`🏠 Tusvicious — ${cfg.dryRun ? "🧪 DRY_RUN" : "⚠️ LIVE"}\nPilih aksi:`, {
       reply_markup: mainMenuKeyboard(),
     });
   });
