@@ -11,7 +11,8 @@ import { getWalletPublicKey } from "./wallet.js";
 import { getUsdPrices } from "./prices.js";
 import { buildClaimFeeTxs } from "./dlmm-build.js";
 import { executePendingTxs } from "./executor.js";
-import { getSwapQuote, buildSwapTx } from "./jupiter-swap.js";
+import { getSwapQuote } from "./jupiter-swap.js";
+import { liveSwapDeps, swapToSolRobust } from "./swap-robust.js";
 import { jupiterSlippageBps } from "./slippage.js";
 import { getTokenBalanceAtomic } from "./reshape.js";
 import { atomicToUi, toBigIntAmount } from "./reshape-math.js";
@@ -58,7 +59,7 @@ export async function quoteClaimSell(poolAddress: string, positionAddress: strin
   return { pool: poolAddress, position: positionAddress, tokenMint, tokenDecimals: dec, feeTokenAtomic: feeTok.toString(), feeTokenUi, feeSolUi: atomicToUi(feeSol, 9), tokenUsd, estSolOut, quoteError };
 }
 
-export async function executeClaimSell(q: ClaimSellQuote, hooks: { onProgress?: (d: number, n: number) => Promise<void> } = {}): Promise<{ success: boolean; signatures: string[]; message: string; error?: string }> {
+export async function executeClaimSell(q: ClaimSellQuote, hooks: { onProgress?: (d: number, n: number) => Promise<void> } = {}): Promise<{ success: boolean; signatures: string[]; message: string; error?: string; leftoverMint?: string }> {
   const cfg = loadConfig({ requireTelegram: false });
   if (cfg.dryRun) return { success: true, signatures: ["DRY_RUN_claim_1", "DRY_RUN_swap_1"], message: `DRY RUN — claim lalu jual ${q.feeTokenUi} token fee → ≈${q.estSolOut ?? "?"} SOL.` };
   const user = getWalletPublicKey();
@@ -69,9 +70,8 @@ export async function executeClaimSell(q: ClaimSellQuote, hooks: { onProgress?: 
   const delta = (await getTokenBalanceAtomic(q.tokenMint, user)) - before;
   if (delta <= 0n) return { success: true, signatures: claim.signatures, message: "Claim OK · fee token = 0, tidak ada yang dijual." };
   const ui = atomicToUi(delta, q.tokenDecimals);
-  const quote = await getSwapQuote({ inputMint: q.tokenMint, outputMint: SOL_MINT, amountAtomic: delta.toString(), slippageBps: jupiterSlippageBps() });
-  const swap = await executePendingTxs([await buildSwapTx({ quote })]);
+  const swap = await swapToSolRobust(q.tokenMint, delta, await liveSwapDeps(), { label: "claimsell" });
   const sigs = [...claim.signatures, ...swap.signatures];
-  if (!swap.success) return { success: false, signatures: sigs, message: `Claim OK · swap gagal: ${swap.error}. Token ${ui} tetap di wallet.`, error: swap.error };
-  return { success: true, signatures: sigs, message: `Claim OK · jual ${ui} token → ≈${(Number(quote.outAmount) / 1e9).toFixed(6)} SOL` };
+  if (!swap.success) return { success: false, signatures: sigs, message: `Claim OK · swap gagal ${swap.attempts}x: ${swap.error}. Token ${ui} tetap di wallet.`, error: swap.error, leftoverMint: q.tokenMint };
+  return { success: true, signatures: sigs, message: `Claim OK · jual ${ui} token → ≈${(Number(swap.estOutLamports) / 1e9).toFixed(6)} SOL${swap.attempts > 1 ? ` (try ${swap.attempts})` : ""}` };
 }

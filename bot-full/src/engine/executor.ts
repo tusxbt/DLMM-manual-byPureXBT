@@ -129,6 +129,11 @@ export async function executePendingTxs(
 
 export const MAX_SEND_ATTEMPTS = 3; // first try + 2 automatic rebuilds on expiry
 const REBROADCAST_MS = 2000;
+const PREFLIGHT_RETRY_MS = 800;
+/** RPC preflight rejected because its node hasn't seen / no longer has the blockhash (or lags). */
+export function isStaleBlockhashError(msg: string): boolean {
+  return /blockhash not found|block height exceeded|minimum context slot|node is behind|BlockhashNotFound/i.test(msg);
+}
 
 type Sendable = { tx: Transaction | VersionedTransaction; raw: Buffer; blockhash: string; lastValid: number };
 
@@ -187,10 +192,22 @@ async function sendWithRetry(item: PendingTxItem, signers: Signer[]): Promise<st
   const conn = getConnection();
   let lastErr = "";
   for (let attempt = 1; attempt <= MAX_SEND_ATTEMPTS; attempt++) {
-    const fresh = await conn.getLatestBlockhash("confirmed");
+    // Fresh blockhash + the slot it was seen at; minContextSlot makes the (load-balanced) RPC node
+    // that simulates/forwards the tx be at least that far, otherwise preflight says "Blockhash not found".
+    const { value: fresh, context } = await conn.getLatestBlockhashAndContext("confirmed");
     const s = prepareTx(item, signers, fresh);
     const lastValid = s.lastValid === Number.MAX_SAFE_INTEGER ? fresh.lastValidBlockHeight : s.lastValid;
-    const sig = await conn.sendRawTransaction(s.raw, { skipPreflight: false, maxRetries: 0, preflightCommitment: "confirmed" });
+    let sig: string;
+    try {
+      sig = await conn.sendRawTransaction(s.raw, { skipPreflight: false, maxRetries: 0, preflightCommitment: "confirmed", minContextSlot: context.slot });
+    } catch (e) {
+      const m = (e as Error).message || String(e);
+      if (!isStaleBlockhashError(m) || attempt >= MAX_SEND_ATTEMPTS || s.lastValid === Number.MAX_SAFE_INTEGER) throw e;
+      lastErr = `preflight: ${m.split("\n")[0].slice(0, 120)}`;
+      log("exec", `${item.label} ${lastErr} → blockhash baru + retry`, "warn");
+      await new Promise((r) => setTimeout(r, PREFLIGHT_RETRY_MS));
+      continue;
+    }
     log("exec", `sent ${item.label} try=${attempt} sig=${sig.slice(0, 12)}…`);
     const outcome = await waitLanded(sig, s.raw, lastValid);
     if (outcome === "ok") return sig;

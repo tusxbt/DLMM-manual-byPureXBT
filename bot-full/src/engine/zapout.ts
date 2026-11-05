@@ -11,7 +11,7 @@ import { getDLMM } from "./dlmmSdk.js";
 import { getWalletPublicKey } from "./wallet.js";
 import { executePendingTxs } from "./executor.js";
 import { getUsdPrices } from "./prices.js";
-import { getSwapQuote, buildSwapTx } from "./jupiter-swap.js";
+import { liveSwapDeps, swapToSolRobust } from "./swap-robust.js";
 import { getSwapSlippagePct, jupiterSlippageBps } from "./slippage.js";
 import { getTokenBalanceAtomic } from "./reshape.js";
 import { atomicToUi, toBigIntAmount } from "./reshape-math.js";
@@ -121,6 +121,8 @@ export type ZapoutExecResult = {
   message: string;
   error?: string;
   steps: Array<{ step: string; ok: boolean; detail: string; signatures?: string[] }>;
+  /** tokens left in the wallet after a failed swap → 🔁 Retry swap */
+  leftoverMints?: string[];
 };
 
 export async function executeZapout(input: {
@@ -260,7 +262,12 @@ export async function executeZapout(input: {
     /* UI only */
   }
   const tQuote = Date.now();
-  const balAfter = await Promise.all(swapMints.map((m) => getTokenBalanceAtomic(m, user)));
+  let balAfter = await Promise.all(swapMints.map((m) => getTokenBalanceAtomic(m, user)));
+  if (balAfter.every((b, i) => b <= (balBefore[i] as bigint))) {
+    // close is confirmed, but a lagging RPC node may not show the tokens yet → re-read once
+    await new Promise((r) => setTimeout(r, 1500));
+    balAfter = await Promise.all(swapMints.map((m) => getTokenBalanceAtomic(m, user)));
+  }
   const deltas = swapMints.map((m, i) => ({ mint: m, delta: balAfter[i] - (balBefore[i] as bigint) }));
   const todo = deltas.filter((d) => d.delta > 0n);
   if (!todo.length) {
@@ -268,45 +275,30 @@ export async function executeZapout(input: {
     lap("total", t0);
     return done("Zapout selesai (tanpa swap).", steps, allSigs, timing);
   }
-  const built = await Promise.allSettled(
-    todo.map(async (d) => {
-      const quote = await getSwapQuote({
-        inputMint: d.mint,
-        outputMint: SOL_MINT,
-        amountAtomic: d.delta.toString(),
-        slippageBps: jupiterSlippageBps(),
-      });
-      return { d, quote, tx: await buildSwapTx({ quote }) };
-    }),
-  );
+  const deps = await liveSwapDeps();
   lap("quote+build", tQuote);
   const tSwap = Date.now();
-  const sent = await Promise.allSettled(
-    built.map(async (b, i) => {
-      if (b.status === "rejected") throw new Error(`quote ${todo[i].mint.slice(0, 4)}…: ${(b.reason as Error).message}`);
-      const r = await executePendingTxs([b.value.tx]);
-      if (!r.success) throw new Error(`swap ${todo[i].mint.slice(0, 4)}…: ${r.error}`);
-      return { r, quote: b.value.quote, d: b.value.d };
-    }),
-  );
+  const sent = await Promise.all(todo.map((d) => swapToSolRobust(d.mint, d.delta, deps, { label: `zapout ${d.mint.slice(0, 4)}` })));
   lap("swap", tSwap);
   let allOk = true;
-  for (const x of sent) {
-    if (x.status === "fulfilled") {
-      allSigs.push(...x.value.r.signatures);
+  const leftover: string[] = [];
+  sent.forEach((r, i) => {
+    allSigs.push(...r.signatures);
+    if (r.success) {
       steps.push({
         step: "swap",
         ok: true,
-        detail: `${x.value.d.mint.slice(0, 4)}… in=${x.value.d.delta} → est ${(Number(x.value.quote.outAmount) / 1e9).toFixed(6)} SOL`,
-        signatures: x.value.r.signatures,
+        detail: `${todo[i].mint.slice(0, 4)}… in=${r.soldAtomic} → est ${(Number(r.estOutLamports) / 1e9).toFixed(6)} SOL${r.attempts > 1 ? ` (try ${r.attempts})` : ""}`,
+        signatures: r.signatures,
       });
     } else {
       allOk = false;
-      steps.push({ step: "swap", ok: false, detail: `${(x.reason as Error).message} — token masih di wallet` });
+      leftover.push(todo[i].mint);
+      steps.push({ step: "swap", ok: false, detail: `swap ${todo[i].mint.slice(0, 4)}… gagal ${r.attempts}x: ${r.error} — token masih di wallet` });
     }
-  }
+  });
   lap("total", t0);
-  if (!allOk) return partial("Swap sebagian gagal — posisi sudah tertutup, token sisa di wallet", steps, allSigs, "swap gagal", timing);
+  if (!allOk) return { ...partial("Swap sebagian gagal — posisi sudah tertutup, token sisa di wallet", steps, allSigs, "swap gagal", timing), leftoverMints: leftover };
   return done("Zapout selesai.", steps, allSigs, timing);
 }
 

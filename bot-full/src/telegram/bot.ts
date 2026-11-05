@@ -9,7 +9,7 @@ import { loadConfig, CONFIRM_TTL_MS } from "../config.js";
 import { fmtNum, fmtUsd, shortAddr, strategyLabel } from "../format.js";
 import { installHtml, sigLine } from "./html.js";
 import { type PositionSnapshot, snapshotOf } from "./pnl-send.js";
-import { setStatus, finishClose, closeTitle, registerCloseUi, type CloseOutcome } from "./close-ui.js";
+import { setStatus, finishClose, closeTitle, registerCloseUi, retrySwapKb, type CloseOutcome } from "./close-ui.js";
 import { log, redactSecrets } from "../logger.js";
 import { roleFor } from "./auth.js";
 import { runAsUser, currentUser } from "../users/context.js";
@@ -424,7 +424,7 @@ async function runClose(ctx: Context, req: ConfirmRequest, statusMsgId?: number)
     markConfirm(id, result.success ? "executed" : "failed", result.message);
     const ms = Date.now() - t0;
     const realized = (result.signatures || []).length ? await computeRealized(result.signatures || [], snap).catch(() => null) : null;
-    outcome = { kind, pair, success: result.success, signatures: result.signatures || [], message: result.message, error: result.error, ms, realized, snapshot: snap ? { ...snap, realized } : snap };
+    outcome = { kind, pair, success: result.success, signatures: result.signatures || [], message: result.message, error: result.error, leftoverMints: result.leftoverMints, ms, realized, snapshot: snap ? { ...snap, realized } : snap };
     if (result.success && kind === "remove") removeTrackedPosition(String(req.payload.position));
   } catch (e) {
     markConfirm(id, "failed", (e as Error).message);
@@ -545,7 +545,7 @@ async function runConfirmedAction(
     onStage?: (stage: "close" | "swap") => void | Promise<void>;
     onProgress?: (done: number, total: number, label: string) => void | Promise<void>;
   } = {},
-): Promise<{ success: boolean; signatures?: string[]; message?: string; error?: string; keyboard?: InlineKeyboard }> {
+): Promise<{ success: boolean; signatures?: string[]; message?: string; error?: string; keyboard?: InlineKeyboard; leftoverMints?: string[] }> {
   if (purpose === "add") {
     const txs = payload.txs as PendingTxItem[];
     const meta = (payload.meta || {}) as Record<string, unknown>;
@@ -644,7 +644,8 @@ async function runConfirmedAction(
   }
 
   if (purpose === "claimsell") {
-    return executeClaimSell(payload.quote as never);
+    const r = await executeClaimSell(payload.quote as never);
+    return r.leftoverMint ? { ...r, keyboard: retrySwapKb([r.leftoverMint], new InlineKeyboard()).text("🏠 Menu", "menu:cancel") } : r;
   }
 
   if (purpose === "flip") {
@@ -683,6 +684,7 @@ async function runConfirmedAction(
       signatures: result.signatures,
       message: result.message,
       error: result.error,
+      leftoverMints: result.leftoverMints,
     };
   }
 

@@ -15,18 +15,24 @@ import { currentUser } from "../users/context.js";
 import { kv, pnlLine } from "./layout.js";
 import { fetchClosedPnl } from "../engine/meteora-pnl.js";
 import { loadConfig } from "../config.js";
-const details = new Map<string, { short: string; full: string; at: number; uid?: string }>();
+const details = new Map<string, { short: string; full: string; at: number; uid?: string; leftover?: string[] }>();
 
-function remember(short: string, full: string): string {
+function remember(short: string, full: string, leftover?: string[]): string {
   const now = Date.now();
   for (const [k, v] of details) if (now - v.at > 6 * 3600e3) details.delete(k);
   const id = crypto.randomBytes(5).toString("hex");
-  details.set(id, { short, full, at: now, uid: currentUser()?.userId });
+  details.set(id, { short, full, at: now, uid: currentUser()?.userId, leftover });
   return id;
 }
 
-export function closeKb(detailId: string, expanded = false): InlineKeyboard {
-  return new InlineKeyboard()
+/** 🔁 Retry swap buttons (stateless, no expiry): sells the current wallet balance of the mint → SOL. */
+export function retrySwapKb(mints: string[] | undefined, kb = new InlineKeyboard()): InlineKeyboard {
+  for (const m of (mints ?? []).slice(0, 3)) kb.text(mints!.length > 1 ? `🔁 Retry swap ${m.slice(0, 4)}…` : "🔁 Retry swap", `sw:retry:${m}`).row();
+  return kb;
+}
+
+export function closeKb(detailId: string, expanded = false, leftover?: string[]): InlineKeyboard {
+  return retrySwapKb(leftover)
     .text(expanded ? "▲ Ringkas" : "ℹ️ Detail", `cl:${expanded ? "less" : "more"}:${detailId}`)
     .text("📊 Positions", "cl:pos")
     .text("🏠", "menu:cancel");
@@ -43,6 +49,8 @@ export type CloseOutcome = {
   /** realized from close txs (withdrawn + fees + swap), rent refunds & tx fees excluded */
   realized?: RealizedOut | null;
   snapshot?: PositionSnapshot;
+  /** tokens left in the wallet after a failed swap */
+  leftoverMints?: string[];
 };
 
 export function closeTitle(kind: "remove" | "zapout", pair: string): string {
@@ -132,11 +140,11 @@ export async function finishClose(ctx: Context, msgId: number, o: CloseOutcome):
     }
   }
   const short = compactResult(o);
-  const id = remember(short, `${short}\n\n${fullDetail(o)}`);
+  const id = remember(short, `${short}\n\n${fullDetail(o)}`, o.leftoverMints);
   if (o.success && o.snapshot && !o.signatures.every((x) => x.startsWith("DRY_RUN"))) {
     try {
       const png = await buildPnlCardPng({ ...o.snapshot, exit_label: o.kind === "zapout" ? "ZAPOUT" : "MANUAL EXIT" }, true);
-      await ctx.replyWithPhoto(new InputFile(png, "pnl.png"), { caption: short, reply_markup: closeKb(id) });
+      await ctx.replyWithPhoto(new InputFile(png, "pnl.png"), { caption: short, reply_markup: closeKb(id, false, o.leftoverMints) });
       try {
         await ctx.api.deleteMessage(ctx.chat!.id, msgId);
       } catch {
@@ -148,13 +156,48 @@ export async function finishClose(ctx: Context, msgId: number, o: CloseOutcome):
     }
   }
   try {
-    await ctx.api.editMessageText(ctx.chat!.id, msgId, short, { reply_markup: closeKb(id) });
+    await ctx.api.editMessageText(ctx.chat!.id, msgId, short, { reply_markup: closeKb(id, false, o.leftoverMints) });
   } catch {
-    await ctx.reply(short, { reply_markup: closeKb(id) });
+    await ctx.reply(short, { reply_markup: closeKb(id, false, o.leftoverMints) });
   }
 }
 
+const retryLocks = new Set<string>();
+
+/** Text for a 🔁 Retry swap result. Pure for tests. */
+export function retrySwapText(r: { success: boolean; soldAtomic: bigint; estOutLamports: bigint; attempts: number; error?: string; signatures: string[] }, mint: string): string {
+  const m = `${mint.slice(0, 4)}…`;
+  if (r.success && r.soldAtomic === 0n && !r.signatures.length) return `ℹ️ Tidak ada saldo ${m} di wallet — tidak ada yang di-swap.`;
+  if (r.success) return `✅ Swap ${m} → SOL OK${r.estOutLamports > 0n ? ` · ≈${(Number(r.estOutLamports) / 1e9).toFixed(6)} SOL` : ""}${r.attempts > 1 ? ` (try ${r.attempts})` : ""}`;
+  return `❌ Swap ${m} → SOL gagal ${r.attempts}x: ${String(r.error ?? "").split("\n")[0].slice(0, 300)}\nToken masih di wallet — tap 🔁 lagi.`;
+}
+
 export function registerCloseUi(bot: Bot): void {
+  // 🔁 Retry swap — no expiry: re-quote and sell the whole current wallet balance of the mint → SOL
+  bot.callbackQuery(/^sw:retry:([1-9A-HJ-NP-Za-km-z]{32,44})$/, async (ctx) => {
+    const mint = ctx.match![1];
+    const lockKey = `${currentUser()?.userId ?? "-"}:${mint}`;
+    if (retryLocks.has(lockKey)) return ctx.answerCallbackQuery({ text: "Swap sedang berjalan…" });
+    retryLocks.add(lockKey);
+    await ctx.answerCallbackQuery({ text: "🔁 Swap ulang…" });
+    try {
+      if (loadConfig({ requireTelegram: false, skipWallet: true }).dryRun) {
+        await ctx.reply(`DRY RUN — swap ulang ${mint.slice(0, 4)}… → SOL tidak dikirim.`);
+        return;
+      }
+      const msg = await ctx.reply(`⏳ Swap ulang ${mint.slice(0, 4)}… → SOL (quote baru, saldo wallet penuh)…`);
+      const { retrySwapAll } = await import("../engine/swap-robust.js");
+      const r = await retrySwapAll(mint);
+      const sigs = r.signatures.map((s) => `https://solscan.io/tx/${s}`).join("\n");
+      const text = [retrySwapText(r, mint), sigs].filter(Boolean).join("\n");
+      const kb = r.success ? new InlineKeyboard().text("📊 Positions", "cl:pos").text("🏠", "menu:cancel") : retrySwapKb([mint]).text("🏠", "menu:cancel");
+      await ctx.api.editMessageText(ctx.chat!.id, msg.message_id, text, { reply_markup: kb }).catch(() => ctx.reply(text, { reply_markup: kb }));
+    } catch (e) {
+      await ctx.reply(`❌ Swap ulang error: ${(e as Error).message.slice(0, 300)}`, { reply_markup: retrySwapKb([mint]) });
+    } finally {
+      retryLocks.delete(lockKey);
+    }
+  });
   bot.callbackQuery("cl:pos", async (ctx) => {
     await ctx.answerCallbackQuery();
     await showPositionCards(ctx, { refetch: true, fresh: true }); // keep the result message intact
@@ -165,7 +208,7 @@ export function registerCloseUi(bot: Bot): void {
     if (!d || d.uid !== currentUser()?.userId) return;
     const more = ctx.match![1] === "more";
     const text = (more ? d.full : d.short).slice(0, 1000);
-    const kb = closeKb(ctx.match![2], more);
+    const kb = closeKb(ctx.match![2], more, d.leftover);
     try {
       if (ctx.callbackQuery.message && "photo" in ctx.callbackQuery.message && ctx.callbackQuery.message.photo) {
         await ctx.editMessageCaption({ caption: text, reply_markup: kb });
