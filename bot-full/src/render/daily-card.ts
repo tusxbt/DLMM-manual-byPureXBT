@@ -1,6 +1,6 @@
 /**
  * Summary PnL card (Tusvicious) — period (day / week / month) and per-token aggregate.
- * Same look as the position PnL card: big total, sub line, bar chart, stats row, footer.
+ * Same look as the position PnL card, no chart: big total, sub line (%/SOL/win rate), stats row, footer.
  */
 import { createCanvas } from "@napi-rs/canvas";
 import { ensureCardFonts } from "./pnl-card.js";
@@ -37,7 +37,7 @@ export const money = (n: number | null | undefined, sign = false) =>
 
 export function renderSummaryCard(d: SummaryCardData): Buffer {
   ensureCardFonts();
-  const W = 1200, H = 800;
+  const W = 1200, H = 630; // no chart → compact card
   const c = createCanvas(W, H);
   const ctx = c.getContext("2d");
   const thin = (px: number) => (ctx.font = `${px}px CardText, CardSans, sans-serif`);
@@ -47,7 +47,7 @@ export function renderSummaryCard(d: SummaryCardData): Buffer {
   const col = d.count ? (up ? UP : DOWN) : MUTED;
   ctx.fillStyle = "#0b0f14";
   ctx.fillRect(0, 0, W, H);
-  const g = ctx.createRadialGradient(W / 2, 230, 0, W / 2, 230, 420);
+  const g = ctx.createRadialGradient(W / 2, 250, 0, W / 2, 250, 440);
   g.addColorStop(0, `rgba(${up ? "52,211,153" : "251,113,133"},0.12)`);
   g.addColorStop(1, "rgba(0,0,0,0)");
   ctx.fillStyle = g;
@@ -58,46 +58,17 @@ export function renderSummaryCard(d: SummaryCardData): Buffer {
     ctx.fillText(t, W / 2, y);
     ctx.textAlign = "left";
   };
-  semi(16); center("TUSVICIOUS", 70, MUTED);
-  semi(28); center(`${d.kicker}  ·  ${d.title}`, 116, TEXT);
-  numf(96); center(money(d.totalUsd, true), 236, col);
+  semi(16); center("TUSVICIOUS", 66, MUTED);
+  semi(30); center(`${d.kicker}  ·  ${d.title}`, 118, TEXT);
+  numf(128); center(money(d.totalUsd, true), 262, col);
   const sub = [
     d.pnlPct == null ? null : `${d.pnlPct >= 0 ? "+" : "−"}${Math.abs(d.pnlPct).toFixed(2)}%`,
     d.pnlSol == null ? null : `${d.pnlSol >= 0 ? "+" : "−"}${Math.abs(d.pnlSol).toFixed(4)} SOL`,
     `${d.count} posisi`,
     `win rate ${d.winRate == null ? "n/a" : `${d.winRate.toFixed(0)}%`}`,
   ].filter(Boolean).join("  ·  ");
-  semi(20); center(sub, 282, d.count ? col : MUTED);
-
-  // bars
-  const cx = 70, cw = W - 140, cy = 322, ch = 236;
-  const mid = cy + ch / 2;
-  const mx = Math.max(1e-9, ...d.bars.map((x) => Math.abs(x.pnlUsd)));
-  ctx.fillStyle = "rgba(148,163,184,0.25)";
-  ctx.fillRect(cx, Math.round(mid), cw, 1);
-  if (d.barsLabel) { thin(12); ctx.fillStyle = MUTED; ctx.fillText(d.barsLabel, cx, cy - 6); }
-  const n = d.bars.length;
-  if (!n) { thin(18); center("Belum ada posisi ditutup", mid - 12, MUTED); }
-  const slot = cw / Math.max(1, n);
-  const bw = Math.max(3, Math.min(64, slot * 0.62));
-  const every = n <= 12 ? 1 : Math.ceil(n / 10);
-  d.bars.forEach((x, i) => {
-    const bx = cx + i * slot + (slot - bw) / 2;
-    const h = (Math.abs(x.pnlUsd) / mx) * (ch / 2 - 22);
-    if (x.empty) { ctx.fillStyle = "rgba(148,163,184,0.18)"; ctx.fillRect(bx, mid - 1, bw, 2); }
-    else {
-      ctx.fillStyle = x.pnlUsd >= 0 ? UP : DOWN;
-      if (x.pnlUsd >= 0) ctx.fillRect(bx, mid - Math.max(2, h), bw, Math.max(2, h));
-      else ctx.fillRect(bx, mid, bw, Math.max(2, h));
-    }
-    ctx.textAlign = "center";
-    if (i % every === 0 || i === n - 1) { thin(13); ctx.fillStyle = MUTED; ctx.fillText(x.label, bx + bw / 2, cy + ch + 22); }
-    if (n <= 12 && !x.empty) {
-      thin(13); ctx.fillStyle = x.pnlUsd >= 0 ? UP : DOWN;
-      ctx.fillText(money(x.pnlUsd, true), bx + bw / 2, x.pnlUsd >= 0 ? mid - h - 9 : mid + h + 19);
-    }
-    ctx.textAlign = "left";
-  });
+  semi(24); center(sub, 316, d.count ? col : MUTED);
+  if (!d.count) { thin(18); center("Belum ada posisi ditutup", 352, MUTED); }
 
   // stats row
   const stats: Array<[string, string, string]> = [
@@ -116,14 +87,14 @@ export function renderSummaryCard(d: SummaryCardData): Buffer {
   stats.forEach(([k, v, cl], i) => {
     const x = 70 + sw * i + sw / 2;
     ctx.textAlign = "center";
-    semi(13); ctx.fillStyle = MUTED; ctx.fillText(k, x, 640);
-    numf(v.length > 15 ? 17 : 22); ctx.fillStyle = cl; ctx.fillText(v, x, 674);
+    semi(14); ctx.fillStyle = MUTED; ctx.fillText(k, x, 428);
+    numf(v.length > 15 ? 20 : 27); ctx.fillStyle = cl; ctx.fillText(v, x, 468);
     ctx.textAlign = "left";
   });
   ctx.fillStyle = "rgba(255,255,255,0.06)";
-  ctx.fillRect(70, 730, W - 140, 1);
-  thin(14); ctx.fillStyle = MUTED; ctx.fillText(d.footer, 70, 764);
-  ctx.textAlign = "right"; ctx.fillStyle = TEXT; ctx.fillText("@dlmmbosku_bot", W - 70, 764); ctx.textAlign = "left";
+  ctx.fillRect(70, 540, W - 140, 1);
+  thin(14); ctx.fillStyle = MUTED; ctx.fillText(d.footer, 70, 578);
+  ctx.textAlign = "right"; ctx.fillStyle = TEXT; ctx.fillText("@dlmmbosku_bot", W - 70, 578); ctx.textAlign = "left";
   return c.toBuffer("image/png");
 }
 
