@@ -164,9 +164,9 @@ function ownCard(s: PositionSnapshot, closed: boolean, now: Date): PnlCardData {
 }
 
 /** Render PNG (with candles if available). Throws on render failure. */
-export async function buildPnlCardPng(s: PositionSnapshot, closed: boolean): Promise<Buffer> {
-  const d = cardDataFromSnapshot(s, closed);
-  const toSec = Math.floor(Date.now() / 1000);
+export async function buildPnlCardPng(s: PositionSnapshot, closed: boolean, at?: Date): Promise<Buffer> {
+  const d = cardDataFromSnapshot(s, closed, at ?? new Date());
+  const toSec = Math.floor((at ? at.getTime() : Date.now()) / 1000);
   const opened = s.opened_at ? Math.floor(Date.parse(s.opened_at) / 1000) : NaN;
   const fromSec = Number.isFinite(opened) ? opened : toSec - 24 * 3600;
   try {

@@ -794,6 +794,7 @@ export const BOT_COMMANDS: { command: string; description: string }[] = [
   { command: "swap", description: "Swap via Jupiter" },
   { command: "pools", description: "Cari pool DLMM dari mint" },
   { command: "balance", description: "Saldo wallet" },
+  { command: "history", description: "Riwayat PnL (posisi, token, harian)" },
   { command: "settings", description: "Pengaturan (slippage, presets)" },
   { command: "cancel", description: "Batalkan alur yang berjalan" },
   { command: "start", description: "Mulai / menu utama" },

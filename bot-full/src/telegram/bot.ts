@@ -9,6 +9,7 @@ import { loadConfig, CONFIRM_TTL_MS } from "../config.js";
 import { fmtNum, fmtUsd, shortAddr, strategyLabel } from "../format.js";
 import { installHtml, sigLine } from "./html.js";
 import { type PositionSnapshot, snapshotOf } from "./pnl-send.js";
+import { registerHistoryUi, showHistory, recordClose } from "./history-ui.js";
 import { setStatus, finishClose, closeTitle, registerCloseUi, retrySwapKb, type CloseOutcome } from "./close-ui.js";
 import { log, redactSecrets } from "../logger.js";
 import { roleFor } from "./auth.js";
@@ -162,6 +163,7 @@ export function createBot(): Bot {
     const map: Record<string, (c: Context) => Promise<void>> = {
       add: startAdd,
       positions: showPositionCards,
+      history: showHistory,
       claim: startClaim,
       remove: startRemove,
       swap: startSwap,
@@ -255,6 +257,7 @@ export function createBot(): Bot {
   registerPositionsView(bot);
   registerTpslUi(bot);
   registerCloseUi(bot);
+  registerHistoryUi(bot);
   registerSettingsPanel(bot);
   registerPnlBgUi(bot, cfg.telegramToken);
 
@@ -431,6 +434,9 @@ async function runClose(ctx: Context, req: ConfirmRequest, statusMsgId?: number)
     outcome = { kind, pair, success: false, signatures: [], error: (e as Error).message, ms: Date.now() - t0, snapshot: snap };
   }
   await finishClose(ctx, msgId, outcome);
+  // position closed (also when only the swap failed) → realized PnL history
+  if (outcome.snapshot && (outcome.success || outcome.leftoverMints?.length))
+    recordClose(outcome.snapshot, (req.payload as Record<string, unknown>).auto ? "auto" : kind);
   const repo = (req.payload as Record<string, unknown>).reposition as { bins?: number } | undefined;
   resetSession(chatKey(ctx));
   if (outcome.success && kind === "remove" && repo) {

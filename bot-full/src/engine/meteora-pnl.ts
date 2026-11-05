@@ -24,6 +24,8 @@ export type MeteoraPnl = {
   unclaimedFeesUsd: number | null;
   /** open time if datapi provides it (ISO) — used for positions opened outside the bot */
   openedAt?: string | null;
+  /** close / last-update time if datapi provides it (ISO) — for history backfill */
+  closedAt?: string | null;
 };
 
 export function parseTime(v: unknown): string | null {
@@ -65,6 +67,7 @@ export function parsePnlPosition(p: any): MeteoraPnl {
     balanceUsd: u ? num(u.balances) : null,
     unclaimedFeesUsd: unclaimed,
     openedAt: parseTime(p.createdAt ?? p.openedAt ?? p.created_at ?? p.openTime),
+    closedAt: p.isClosed ? parseTime(p.closedAt ?? p.closeTime ?? p.closed_at ?? p.updatedAt ?? p.lastUpdatedAt) : null,
   };
 }
 

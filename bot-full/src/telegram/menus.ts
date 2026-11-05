@@ -15,7 +15,9 @@ export function mainMenuKeyboard(): InlineKeyboard {
     .text("💰 Balance", "menu:balance")
     .row()
     .text("⚙️ Settings", "menu:settings")
-    .text("🔍 Pools", "menu:pools");
+    .text("🔍 Pools", "menu:pools")
+    .row()
+    .text("📜 Riwayat", "menu:history");
 }
 
 export const CANCEL_KB = new InlineKeyboard().text("❌ Batal", "menu:cancel");
