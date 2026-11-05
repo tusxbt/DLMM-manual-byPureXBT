@@ -15,7 +15,8 @@ import { executePendingTxs } from "./executor.js";
 import { getUsdPrices } from "./prices.js";
 import { liveSwapDeps, swapToSolRobust } from "./swap-robust.js";
 import { getSwapSlippagePct, jupiterSlippageBps } from "./slippage.js";
-import { getTokenBalanceAtomic } from "./reshape.js";
+import { getTokenBalanceAtomic, waitTokenBalanceIncrease, clampSwapAmount } from "./reshape.js";
+import { fetchFlows, tokenDeltaFromFlows } from "./realized.js";
 import { atomicToUi, toBigIntAmount } from "./reshape-math.js";
 import { removeTrackedPosition } from "../store/positions.js";
 import type { PendingTxItem } from "./pending.js";
@@ -277,21 +278,41 @@ export async function executeZapout(input: {
     /* UI only */
   }
   const tBal = Date.now();
-  let balAfter = await Promise.all(swapMints.map((m) => getTokenBalanceAtomic(m, user)));
-  if (balAfter.every((b, i) => b <= (balBefore[i] as bigint))) {
-    // close is confirmed, but a lagging RPC node may not show the tokens yet → re-read once
-    await new Promise((r) => setTimeout(r, 1500));
-    balAfter = await Promise.all(swapMints.map((m) => getTokenBalanceAtomic(m, user)));
+  // Prefer token deltas from the close txs themselves (authoritative; survives RPC balance lag /
+  // Token-2022 ATA indexing). Then wait for the wallet to show them and never swap more than received.
+  const closeSigs = steps.find((x) => x.step === "claim_remove_close")?.signatures?.filter((x) => !x.startsWith("DRY_RUN")) ?? [];
+  let txDeltas = new Map<string, bigint>();
+  try {
+    if (closeSigs.length) {
+      const flows = await fetchFlows(closeSigs);
+      for (const m of swapMints) {
+        const d = tokenDeltaFromFlows(flows, user.toBase58(), m);
+        if (d > 0n) txDeltas.set(m, d);
+      }
+    }
+  } catch (e) {
+    log("zapout", `token delta from close txs: ${(e as Error).message}`, "warn");
   }
-  const deltas = swapMints.map((m, i) => ({ mint: m, delta: balAfter[i] - (balBefore[i] as bigint) }));
-  const todo = deltas.filter((d) => d.delta > 0n);
+  const deltas: { mint: string; delta: bigint }[] = [];
+  for (let i = 0; i < swapMints.length; i++) {
+    const m = swapMints[i];
+    const before = balBefore[i] as bigint;
+    let want = txDeltas.get(m) ?? 0n;
+    let { balance, delta, waitedMs } = await waitTokenBalanceIncrease(m, user, before, { timeoutMs: want > 0n ? 8_000 : 3_000 });
+    if (want <= 0n) want = delta; // no tx delta → fall back to observed balance increase
+    const amt = clampSwapAmount(want, balance);
+    if (amt > 0n) deltas.push({ mint: m, delta: amt });
+    else if (want > 0n)
+      log("zapout", `mint ${m.slice(0, 6)} received ${want} on-chain but wallet still ${balance} after ${waitedMs}ms`, "warn");
+  }
+  lap("balance", tBal);
+  const todo = deltas;
   if (!todo.length) {
     steps.push({ step: "swap", ok: true, detail: "Tidak ada token non-SOL untuk di-swap (delta ≤ 0)." });
     lap("total", t0);
-  log("zapout_timing", timing.map(([k, v]) => `${k}=${v}ms`).join(" "));
+    log("zapout_timing", timing.map(([k, v]) => `${k}=${v}ms`).join(" "));
     return done("Zapout selesai (tanpa swap).", steps, allSigs, timing);
   }
-  lap("balance", tBal);
   const deps = await depsP;
   const tSwap = Date.now();
   const sent = await Promise.all(todo.map((d) => swapToSolRobust(d.mint, d.delta, deps, { label: `zapout ${d.mint.slice(0, 4)}` })));

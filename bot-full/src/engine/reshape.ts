@@ -80,26 +80,67 @@ async function mintDecimals(mint: PublicKey): Promise<number> {
 }
 
 /** SPL token balance (atomic) for owner; 0 if ATA missing. Native SOL not used for token side. */
+/** SPL Token + Token-2022 program ids (mint-filter alone can miss a brand-new ATA on some RPCs). */
+const TOKEN_PROGRAM = new PublicKey("TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA");
+const TOKEN_2022_PROGRAM = new PublicKey("TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb");
+
 export async function getTokenBalanceAtomic(mint: string, owner: PublicKey): Promise<bigint> {
   if (mint === SOL_MINT) {
     const lamports = await getConnection().getBalance(owner);
     return BigInt(lamports);
   }
   const conn = getConnection();
-  try {
-    const accounts = await conn.getParsedTokenAccountsByOwner(owner, {
-      mint: new PublicKey(mint),
-    });
+  const mintPk = new PublicKey(mint);
+  const sum = async (filter: { mint: PublicKey } | { programId: PublicKey }): Promise<bigint> => {
+    const accounts = await conn.getParsedTokenAccountsByOwner(owner, filter);
     let total = 0n;
     for (const a of accounts.value) {
-      const amt = a.account?.data?.parsed?.info?.tokenAmount?.amount;
-      total += toBigIntAmount(amt);
+      const info = a.account?.data?.parsed?.info;
+      if (filter && "programId" in filter && info?.mint !== mint) continue;
+      total += toBigIntAmount(info?.tokenAmount?.amount);
     }
     return total;
+  };
+  try {
+    // preferred: mint filter (works for both programs on most RPCs)
+    const byMint = await sum({ mint: mintPk });
+    if (byMint > 0n) return byMint;
+    // fallback: scan Token-2022 then classic (new ATA indexing lag / mint-filter gaps)
+    const t22 = await sum({ programId: TOKEN_2022_PROGRAM });
+    if (t22 > 0n) return t22;
+    return await sum({ programId: TOKEN_PROGRAM });
   } catch (e) {
     log("reshape", `balance read failed: ${(e as Error).message}`, "warn");
     return 0n;
   }
+}
+
+/**
+ * Wait until the wallet shows at least `want` more of `mint` than `before`, or timeout.
+ * Returns the observed balance (may still equal `before` on timeout).
+ */
+export async function waitTokenBalanceIncrease(
+  mint: string,
+  owner: PublicKey,
+  before: bigint,
+  opts: { timeoutMs?: number; intervalMs?: number; minDelta?: bigint } = {},
+): Promise<{ balance: bigint; delta: bigint; waitedMs: number }> {
+  const timeout = opts.timeoutMs ?? 8_000;
+  const interval = opts.intervalMs ?? 400;
+  const minDelta = opts.minDelta ?? 1n;
+  const t0 = Date.now();
+  let balance = await getTokenBalanceAtomic(mint, owner);
+  while (balance - before < minDelta && Date.now() - t0 < timeout) {
+    await new Promise((r) => setTimeout(r, interval));
+    balance = await getTokenBalanceAtomic(mint, owner);
+  }
+  return { balance, delta: balance - before, waitedMs: Date.now() - t0 };
+}
+
+/** Cap a desired swap amount by the live wallet balance (never oversell). */
+export function clampSwapAmount(want: bigint, balance: bigint): bigint {
+  if (want <= 0n || balance <= 0n) return 0n;
+  return want < balance ? want : balance;
 }
 
 export async function analyzeReshape(input: {

@@ -15,7 +15,8 @@ import { executePendingTxs } from "./executor.js";
 import { getSwapQuote } from "./jupiter-swap.js";
 import { liveSwapDeps, swapToSolRobust } from "./swap-robust.js";
 import { jupiterSlippageBps } from "./slippage.js";
-import { getTokenBalanceAtomic } from "./reshape.js";
+import { getTokenBalanceAtomic, waitTokenBalanceIncrease, clampSwapAmount } from "./reshape.js";
+import { fetchFlows, tokenDeltaFromFlows } from "./realized.js";
 import { atomicToUi, toBigIntAmount } from "./reshape-math.js";
 
 export type ClaimSellQuote = {
@@ -68,11 +69,17 @@ export async function executeClaimSell(q: ClaimSellQuote, hooks: { onProgress?: 
   const before = await getTokenBalanceAtomic(q.tokenMint, user);
   const claim = await executePendingTxs(await buildClaimFeeTxs({ poolAddress: q.pool, positionAddress: q.position }), [], { onProgress: hooks.onProgress });
   if (!claim.success) return { success: false, signatures: claim.signatures, message: `Claim gagal: ${claim.error}`, error: claim.error };
-  await new Promise((r) => setTimeout(r, 2000));
-  const delta = (await getTokenBalanceAtomic(q.tokenMint, user)) - before;
-  if (delta <= 0n) return { success: true, signatures: claim.signatures, message: "Claim OK · fee token = 0, tidak ada yang dijual." };
-  const ui = atomicToUi(delta, q.tokenDecimals);
-  const swap = await swapToSolRobust(q.tokenMint, delta, await liveSwapDeps(), { label: "claimsell" });
+  let want = 0n;
+  try {
+    const flows = await fetchFlows(claim.signatures.filter((x) => !x.startsWith("DRY_RUN")));
+    want = tokenDeltaFromFlows(flows, user.toBase58(), q.tokenMint);
+  } catch { /* fall back to balance */ }
+  const { balance, delta } = await waitTokenBalanceIncrease(q.tokenMint, user, before, { timeoutMs: want > 0n ? 8_000 : 3_000 });
+  if (want <= 0n) want = delta;
+  const amt = clampSwapAmount(want, balance);
+  if (amt <= 0n) return { success: true, signatures: claim.signatures, message: "Claim OK · fee token = 0, tidak ada yang dijual." };
+  const ui = atomicToUi(amt, q.tokenDecimals);
+  const swap = await swapToSolRobust(q.tokenMint, amt, await liveSwapDeps(), { label: "claimsell" });
   const sigs = [...claim.signatures, ...swap.signatures];
   if (!swap.success) return { success: false, signatures: sigs, message: `Claim OK · swap gagal ${swap.attempts}x: ${swap.error}. Token ${ui} tetap di wallet.`, error: swap.error, leftoverMint: q.tokenMint };
   return { success: true, signatures: sigs, message: `Claim OK · jual ${ui} token → ≈${(Number(swap.estOutLamports) / 1e9).toFixed(6)} SOL${swap.attempts > 1 ? ` (try ${swap.attempts})` : ""}` };

@@ -168,6 +168,23 @@ export async function fetchAccountSigs(address: string, max = 3000): Promise<str
   return out;
 }
 
+
+/** Net atomic token change for `mint` owned by `wallet` across flows (post − pre). */
+export function tokenDeltaFromFlows(flows: TxFlow[], wallet: string, mint: string): bigint {
+  let d = 0n;
+  for (const f of flows) {
+    const idx = new Set(
+      [...f.preTok, ...f.postTok].filter((t) => t.owner === wallet && t.mint === mint).map((t) => t.i),
+    );
+    for (const i of idx) {
+      const a = f.preTok.find((t) => t.i === i && t.mint === mint);
+      const b = f.postTok.find((t) => t.i === i && t.mint === mint);
+      d += BigInt(b?.amount ?? "0") - BigInt(a?.amount ?? "0");
+    }
+  }
+  return d;
+}
+
 /** Fetch landed txs (parsed) and convert to flows. Missing txs are skipped (logged). */
 export async function fetchFlows(signatures: string[]): Promise<TxFlow[]> {
   const conn = getConnection();
