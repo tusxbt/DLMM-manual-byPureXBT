@@ -7,13 +7,27 @@ import { log } from "../logger.js";
 export const RPC_COOLDOWN_MS = 45_000;
 const DEFAULT_RPC = "https://api.mainnet-beta.solana.com";
 
+/** True if value is a usable http(s) RPC endpoint (rejects "", "undefined", "null"). */
+export function isValidRpcUrl(u: unknown): u is string {
+  if (typeof u !== "string") return false;
+  const s = u.trim();
+  if (!s || s === "undefined" || s === "null") return false;
+  try {
+    const x = new URL(s);
+    return x.protocol === "http:" || x.protocol === "https:";
+  } catch {
+    return false;
+  }
+}
+
 /** Parse RPC_URLS (comma-separated) or fall back to a single RPC_URL. Deduped, order kept. */
 export function parseRpcUrls(urlsEnv?: string | null, single?: string | null): string[] {
-  const fromList = String(urlsEnv ?? "")
-    .split(",")
-    .map((s) => s.trim())
-    .filter(Boolean);
-  const list = fromList.length ? fromList : [String(single ?? "").trim() || DEFAULT_RPC];
+  const raw = String(urlsEnv ?? "").trim()
+    ? String(urlsEnv).split(",")
+    : String(single ?? "").includes(",")
+      ? String(single).split(",")
+      : [String(single ?? "")];
+  const list = raw.map((s) => s.trim()).filter(isValidRpcUrl);
   const seen = new Set<string>();
   const out: string[] = [];
   for (const u of list) {
@@ -21,6 +35,7 @@ export function parseRpcUrls(urlsEnv?: string | null, single?: string | null): s
     seen.add(u);
     out.push(u);
   }
+  if (!out.length) out.push(DEFAULT_RPC);
   return out;
 }
 
@@ -33,7 +48,7 @@ export function isFailoverHttpStatus(status: number): boolean {
 }
 
 export function isFailoverErrorMessage(msg: string): boolean {
-  return /429|too many requests|rate limit|ECONNRESET|ETIMEDOUT|ENOTFOUND|EAI_AGAIN|fetch failed|network|socket hang up|aborted|timeout|timed?\s*out|503|502|504|520|521|522|523|524/i.test(
+  return /429|too many requests|rate limit|ECONNRESET|ETIMEDOUT|ENOTFOUND|EAI_AGAIN|fetch failed|network|socket hang up|aborted|timeout|timed?\s*out|Failed to parse URL|503|502|504|520|521|522|523|524/i.test(
     msg,
   );
 }
@@ -47,10 +62,6 @@ export type RpcFailoverOpts = {
   onSwitch?: (from: number, to: number, reason: string) => void;
 };
 
-/**
- * Stateful RPC pool. `fetch` rewrites the Connection's endpoint URL to the current healthy RPC
- * and retries on the next one after a failover error (with cooldown on the bad one).
- */
 export class RpcFailover {
   readonly urls: string[];
   private idx = 0;
@@ -61,9 +72,10 @@ export class RpcFailover {
   private readonly onSwitch?: (from: number, to: number, reason: string) => void;
 
   constructor(urls: string[], opts: RpcFailoverOpts = {}) {
-    if (!urls.length) throw new Error("RpcFailover: no RPC URLs");
-    this.urls = [...urls];
-    this.coolUntil = urls.map(() => 0);
+    const clean = urls.filter(isValidRpcUrl);
+    if (!clean.length) throw new Error("RpcFailover: no RPC URLs");
+    this.urls = clean;
+    this.coolUntil = clean.map(() => 0);
     this.cooldownMs = opts.cooldownMs ?? RPC_COOLDOWN_MS;
     this.fetchFn = opts.fetchFn ?? fetch;
     this.now = opts.now ?? Date.now;
@@ -83,13 +95,11 @@ export class RpcFailover {
     return rpcLabel(i);
   }
 
-  /** Mark an RPC cooling down after a rate-limit / server error. */
   markBad(index: number, reason: string): void {
     this.coolUntil[index] = this.now() + this.cooldownMs;
     log("rpc", `${rpcLabel(index)} cooldown ${Math.round(this.cooldownMs / 1000)}s (${reason})`, "warn");
   }
 
-  /** Next usable index (skips cooling); wraps. Prefer staying on current if healthy. */
   pick(start = this.idx): number {
     const n = this.urls.length;
     const t = this.now();
@@ -97,8 +107,7 @@ export class RpcFailover {
       const i = (start + k) % n;
       if (this.coolUntil[i]! <= t) return i;
     }
-    // all cooling → pick the one that cools soonest
-    let best = start;
+    let best = start % n;
     for (let i = 0; i < n; i++) if (this.coolUntil[i]! < this.coolUntil[best]!) best = i;
     return best;
   }
@@ -111,15 +120,26 @@ export class RpcFailover {
     log("rpc", `${rpcLabel(from)} → ${rpcLabel(to)} (${reason})`, "warn");
   }
 
-  /** Replace the Connection endpoint host in a request URL with `url`. */
-  rewriteUrl(input: Parameters<typeof fetch>[0], url: string): string {
-    const raw = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+  /** Replace the Connection endpoint host in a request URL with `url`. Never throws on bad input. */
+  rewriteUrl(input: Parameters<typeof fetch>[0] | null | undefined, url: string): string {
+    if (!isValidRpcUrl(url)) {
+      const fb = this.urls[0];
+      if (!fb) throw new Error("RpcFailover: no valid RPC URL");
+      return fb;
+    }
+    let raw = "";
+    try {
+      if (typeof input === "string") raw = input;
+      else if (input instanceof URL) raw = input.toString();
+      else if (input && typeof (input as Request).url === "string") raw = (input as Request).url;
+    } catch {
+      raw = "";
+    }
+    if (!raw || raw === "undefined" || raw === "null") return url;
     try {
       const src = new URL(raw);
       const dst = new URL(url);
-      // keep path (usually /) and replace origin + merge query (API keys live on the RPC URL)
       const out = new URL(dst.origin + (src.pathname || "/"));
-      // destination query first (api-key), then any request-specific params from src that aren't keys
       dst.searchParams.forEach((v, k) => out.searchParams.set(k, v));
       src.searchParams.forEach((v, k) => {
         if (!out.searchParams.has(k)) out.searchParams.set(k, v);
@@ -139,7 +159,16 @@ export class RpcFailover {
     for (let attempt = 0; attempt < n; attempt++) {
       const i = this.pick(this.idx);
       if (i !== this.idx) this.switchTo(i, "skip cooldown");
-      const url = this.rewriteUrl(input, this.urls[i]!);
+      const target = this.urls[i];
+      if (!isValidRpcUrl(target)) {
+        lastErr = new Error("invalid RPC slot");
+        continue;
+      }
+      const url = this.rewriteUrl(input, target);
+      if (!isValidRpcUrl(url)) {
+        lastErr = new Error("rewritten RPC URL invalid");
+        continue;
+      }
       try {
         const res = await this.fetchFn(url, init);
         if (!isFailoverHttpStatus(res.status)) {

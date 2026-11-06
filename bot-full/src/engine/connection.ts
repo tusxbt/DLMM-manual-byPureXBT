@@ -2,10 +2,12 @@ import { Connection, PublicKey, LAMPORTS_PER_SOL } from "@solana/web3.js";
 import { loadConfig, USDC_MINT } from "../config.js";
 import { log } from "../logger.js";
 import { getWalletPublicKey } from "./wallet.js";
-import { RpcFailover, parseRpcUrls, RPC_COOLDOWN_MS } from "./rpc-failover.js";
+import { RpcFailover, parseRpcUrls, isValidRpcUrl, RPC_COOLDOWN_MS } from "./rpc-failover.js";
 
 let _conn: Connection | null = null;
 let _failover: RpcFailover | null = null;
+
+const PUBLIC_FALLBACK = "https://api.mainnet-beta.solana.com";
 
 /** Test / ops: replace the pool (never log URLs). */
 export function getRpcFailover(): RpcFailover | null {
@@ -15,10 +17,13 @@ export function getRpcFailover(): RpcFailover | null {
 export function getConnection(): Connection {
   if (!_conn) {
     const cfg = loadConfig({ requireTelegram: false, skipWallet: true });
-    const urls = cfg.rpcUrls?.length ? cfg.rpcUrls : parseRpcUrls(undefined, cfg.rpcUrl);
+    let urls = (cfg.rpcUrls?.length ? cfg.rpcUrls : parseRpcUrls(undefined, cfg.rpcUrl)).filter(isValidRpcUrl);
+    if (!urls.length) urls = parseRpcUrls(undefined, undefined);
+    // Extra public fallback when only a private RPC is configured (helps 429 / bad secondary slots)
+    if (urls.length === 1 && !urls[0]!.includes("mainnet-beta.solana.com")) {
+      urls = [...urls, PUBLIC_FALLBACK];
+    }
     _failover = new RpcFailover(urls, { cooldownMs: RPC_COOLDOWN_MS });
-    // Endpoint string is the primary; custom fetch rewrites to the current healthy RPC.
-    // disableRetryOnRateLimit: we handle 429 ourselves via failover.
     _conn = new Connection(urls[0]!, {
       commitment: "confirmed",
       disableRetryOnRateLimit: true,

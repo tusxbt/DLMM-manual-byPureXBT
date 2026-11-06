@@ -117,6 +117,7 @@ test("config loads rpcUrls from RPC_URLS; connection fetch fails over", async ()
   const cfg2 = loadConfig({ requireTelegram: false, skipWallet: true });
   assert.deepEqual(cfg2.rpcUrls, ["https://only.example/?api-key=ONLY"]);
   getConnection();
-  assert.equal(getRpcFailover()?.size, 1);
+  // private RPC gets a public mainnet-beta fallback so 429 can fail over
+  assert.equal(getRpcFailover()?.size, 2);
   resetConnection();
 });

@@ -78,3 +78,10 @@ html, body {
   margin-top: 14px; display: flex; justify-content: space-between; gap: 8px;
   font-size: 11px; color: var(--muted);
 }
+
+.badge.live.err { color: var(--danger); }
+.err {
+  margin: 10px 0 0; padding: 8px 10px; border-radius: 10px;
+  background: #3f1d1d; border: 1px solid #7f1d1d; color: #fecaca;
+  font-size: 12px; word-break: break-word;
+}

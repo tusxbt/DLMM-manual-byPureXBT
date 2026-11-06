@@ -197,14 +197,22 @@ async function loadCardsUncached(): Promise<PositionCard[]> {
   const tracked = loadTrackedPositions();
   const cost: Record<string, number> = {};
   for (const t of tracked) if (t.cost_usd) cost[t.position] = t.cost_usd;
-  const live = await listLivePositions(cost);
+  let live: LivePosition[];
+  try {
+    live = await listLivePositions(cost);
+  } catch (e) {
+    const msg = (e as Error).message || String(e);
+    throw new Error(/Failed to parse URL|undefined/i.test(msg)
+      ? "RPC URL invalid/undefined — cek RPC_URL / RPC_URLS di .env (jangan kosong/undefined)."
+      : msg);
+  }
   // Meteora datapi PnL (same as UI) — one fetch per pool per refresh; missing → own 'estimasi'
   let met = new Map<string, MeteoraPnl>();
   try {
     const wallet = loadConfig({ requireTelegram: false, skipWallet: true }).walletPublicKey.toBase58();
     met = await fetchPnlForPools(live.map((p) => p.pool), wallet, "open");
   } catch {
-    /* fallback */
+    /* fallback — never block Positions */
   }
   // market cap: price × quote USD × on-chain supply (cached per mint)
   let solUsd: number | null = null;
@@ -302,7 +310,11 @@ export async function showPositionCards(ctx: Context, opts: { refetch?: boolean;
     s.data.posPage = r.page;
     await editOrReply(ctx, msgId, r.text, r.kb);
   } catch (e) {
-    await editOrReply(ctx, msgId, `❌ ${redactSecrets((e as Error).message)}`, mainMenuKeyboard());
+    const raw = redactSecrets((e as Error).message || String(e));
+    const tip = /Failed to parse URL|undefined|ECONN|429|timeout|fetch failed/i.test(raw)
+      ? "RPC/jaringan lagi bermasalah. Coba 🔄 Refresh sebentar lagi — posisi on-chain aman."
+      : raw;
+    await editOrReply(ctx, msgId, `❌ Gagal memuat positions.\n${tip}`, mainMenuKeyboard());
   }
 }
 
@@ -340,25 +352,29 @@ function confirmFor(kind: "claim" | "remove", p: PositionCard, reposition: boole
 
 /** Mint a read-only live URL for a card owned by the current Telegram user. */
 export function mintLiveUrlForCard(p: Pick<PositionCard, "position" | "pool" | "pair" | "strategy_text" | "pool_name">): string | null {
-  if (!isLiveWebRunning()) return null;
-  const currency = currentDisplayCurrency() as "USD" | "IDR" | "SOL";
-  const me = currentUser();
-  let ownerWallet: string | undefined;
   try {
-    ownerWallet = loadConfig({ requireTelegram: false, skipWallet: true }).walletPublicKey.toBase58();
+    if (!isLiveWebRunning()) return null;
+    const currency = currentDisplayCurrency() as "USD" | "IDR" | "SOL";
+    const me = currentUser();
+    let ownerWallet: string | undefined;
+    try {
+      ownerWallet = loadConfig({ requireTelegram: false, skipWallet: true }).walletPublicKey.toBase58();
+    } catch {
+      ownerWallet = undefined;
+    }
+    return createLiveViewUrl({
+      position: p.position,
+      pool: p.pool,
+      pair: p.pair || p.pool_name?.replace(/-/g, "/"),
+      strategy: p.strategy_text,
+      currency,
+      ownerUserId: me?.userId,
+      isOwner: me?.isOwner,
+      ownerWallet,
+    });
   } catch {
-    ownerWallet = undefined;
+    return null; // never break Positions / Telegram handlers
   }
-  return createLiveViewUrl({
-    position: p.position,
-    pool: p.pool,
-    pair: p.pair || p.pool_name?.replace(/-/g, "/"),
-    strategy: p.strategy_text,
-    currency,
-    ownerUserId: me?.userId,
-    isOwner: me?.isOwner,
-    ownerWallet,
-  });
 }
 
 /** Pure: /web list text + keyboard (Live Bins per position). */

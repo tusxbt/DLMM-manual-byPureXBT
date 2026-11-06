@@ -174,11 +174,11 @@ test("hub polls only while subscribers exist", async () => {
     close: () => undefined,
   });
   assert.equal(__hubClientCount(), 1);
-  await new Promise((r) => setTimeout(r, 1700));
+  await new Promise((r) => setTimeout(r, 2500));
   assert.ok(fetches >= 1, `expected poll while subscribed, got ${fetches}`);
   unsub();
   const after = fetches;
-  await new Promise((r) => setTimeout(r, 1700));
+  await new Promise((r) => setTimeout(r, 2500));
   assert.equal(fetches, after, "no poll without subscribers");
   __hubTestReset();
   resetLiveSessionsForTests();

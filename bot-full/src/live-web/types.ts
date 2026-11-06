@@ -31,6 +31,8 @@ export type LiveSnapshot = {
   feesText: string;
   valueText: string;
   capitalText: string;
+  /** Present when last fetch failed; UI must not show green live */
+  error?: string;
 };
 
 export type LiveSessionInfo = {

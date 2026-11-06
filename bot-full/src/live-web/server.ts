@@ -3,7 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { getLiveSession, mintLiveToken, pruneSessions } from "./tokens.js";
-import { subscribe, setLiveSnapshotFetcher, type SnapshotFetcher } from "./hub.js";
+import { subscribe, setLiveSnapshotFetcher, getLastLiveSnapshot, type SnapshotFetcher } from "./hub.js";
 import { buildDemoSnapshot } from "./demo-sim.js";
 import type { LiveSnapshot } from "./types.js";
 
@@ -197,15 +197,19 @@ export async function startLiveWebServer(
         send(res, 200, JSON.stringify(buildDemoSnapshot({ currency: session.currency })), "application/json");
         return;
       }
-      // real: last known via hub would need export; for now return minimal placeholder until fetcher fills SSE
+      const last = getLastLiveSnapshot(token);
+      if (last) {
+        send(res, 200, JSON.stringify(last), "application/json");
+        return;
+      }
       send(
         res,
         200,
         JSON.stringify({
           demo: false,
           ts: new Date().toISOString(),
-          pair: "…",
-          strategy: "…",
+          pair: session.pair || "TOKEN/SOL",
+          strategy: session.strategy || "—",
           positionShort: (session.position || "").slice(0, 4) + "…" + (session.position || "").slice(-4),
           poolShort: (session.pool || "").slice(0, 4) + "…" + (session.pool || "").slice(-4),
           activeBinId: 0,
@@ -225,8 +229,9 @@ export async function startLiveWebServer(
           feesText: "—",
           valueText: "—",
           capitalText: "—",
+          error: "loading",
         } satisfies LiveSnapshot),
-        "application/json"
+        "application/json",
       );
       return;
     }

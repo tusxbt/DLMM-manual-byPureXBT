@@ -23,10 +23,15 @@ const clients = new Map<string, Set<Client>>(); // token -> clients
 let pollTimer: ReturnType<typeof setInterval> | null = null;
 let fetcher: SnapshotFetcher | null = null;
 const lastSnap = new Map<string, LiveSnapshot>();
-const POLL_MS = 1500;
+const fetching = new Set<string>();
+const POLL_MS = 2000;
 
 export function setLiveSnapshotFetcher(fn: SnapshotFetcher | null): void {
   fetcher = fn;
+}
+
+export function getLastLiveSnapshot(token: string): LiveSnapshot | null {
+  return lastSnap.get(token) ?? null;
 }
 
 export function subscribe(token: string, client: Client): () => void {
@@ -37,7 +42,6 @@ export function subscribe(token: string, client: Client): () => void {
   }
   set.add(client);
   touchSession(token);
-  // push cached or immediate demo
   const s = getLiveSession(token);
   if (s?.demo) {
     const snap = buildDemoSnapshot({ currency: s.currency });
@@ -45,6 +49,9 @@ export function subscribe(token: string, client: Client): () => void {
     pushOne(client, snap);
   } else if (lastSnap.has(token)) {
     pushOne(client, lastSnap.get(token)!);
+  } else {
+    // immediate kick so first paint isn't empty placeholder
+    void refreshToken(token);
   }
   ensurePoll();
   return () => {
@@ -87,8 +94,36 @@ function stopPoll(): void {
   }
 }
 
+async function refreshToken(token: string): Promise<void> {
+  const s = getLiveSession(token);
+  if (!s) return;
+  if (s.demo) {
+    broadcast(token, buildDemoSnapshot({ currency: s.currency }));
+    return;
+  }
+  if (!fetcher || !s.position || !s.pool) return;
+  if (fetching.has(token)) return;
+  fetching.add(token);
+  try {
+    const snap = await fetcher({
+      position: s.position,
+      pool: s.pool,
+      currency: s.currency,
+      pair: s.pair,
+      strategy: s.strategy,
+      ownerUserId: s.ownerUserId,
+      isOwner: s.isOwner,
+      ownerWallet: s.ownerWallet,
+    });
+    if (snap) broadcast(token, { ...snap, demo: false });
+  } catch {
+    /* keep last */
+  } finally {
+    fetching.delete(token);
+  }
+}
+
 async function tick(): Promise<void> {
-  // Demo sessions: refresh every tick from sim
   for (const token of clients.keys()) {
     const s = getLiveSession(token);
     if (!s) continue;
@@ -97,27 +132,23 @@ async function tick(): Promise<void> {
       continue;
     }
   }
-  // Real: only positions that currently have at least one subscriber
   if (!fetcher) return;
   const open = listActiveRealSessions().filter((s) => (clients.get(s.token)?.size ?? 0) > 0);
+  // one fetch per unique position (dedupe shared viewers)
+  const byPos = new Map<string, typeof open>();
+  for (const s of open) {
+    const k = s.position!;
+    if (!byPos.has(k)) byPos.set(k, []);
+    byPos.get(k)!.push(s);
+  }
   await Promise.all(
-    open.map(async (s) => {
-      try {
-        const snap = await fetcher!({
-          position: s.position!,
-          pool: s.pool!,
-          currency: s.currency,
-          pair: s.pair,
-          strategy: s.strategy,
-          ownerUserId: s.ownerUserId,
-          isOwner: s.isOwner,
-          ownerWallet: s.ownerWallet,
-        });
-        if (snap) broadcast(s.token, { ...snap, demo: false });
-      } catch {
-        /* keep last */
-      }
-    })
+    [...byPos.values()].map(async (group) => {
+      await refreshToken(group[0]!.token);
+      // copy snap to sibling tokens for same position
+      const snap = lastSnap.get(group[0]!.token);
+      if (!snap) return;
+      for (const s of group.slice(1)) broadcast(s.token, snap);
+    }),
   );
 }
 
@@ -126,6 +157,7 @@ export function __hubTestReset(): void {
   stopPoll();
   clients.clear();
   lastSnap.clear();
+  fetching.clear();
   fetcher = null;
 }
 
