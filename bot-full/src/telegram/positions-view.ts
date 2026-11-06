@@ -27,6 +27,8 @@ import { analyzeFlip, type FlipAnalysis } from "../engine/flip.js";
 import { checkFunds } from "../engine/funds-check.js";
 import { getBalances } from "../engine/connection.js";
 import { onZapoutPos } from "./zapout-handlers.js";
+import { createLiveViewUrl, isLiveWebRunning } from "../live-web/index.js";
+import { currentDisplayCurrency } from "../display-money.js";
 
 const key = (ctx: Context) => String(ctx.chat?.id ?? "");
 export const usdOrNa = (n: number | null | undefined) => (n == null || !Number.isFinite(n) ? "n/a (harga tidak tersedia)" : fmtUsd(n));
@@ -130,6 +132,8 @@ export function positionKeyboard(addr: string): InlineKeyboard {
     .row()
     .text("📈 Card", `pv:card:${addr}`)
     .text("🔄 Refresh", `pv:ref:${addr}`)
+    .row()
+    .text("📡 Live Bins", `pv:live:${addr}`)
     .row()
     .text("← Positions", "pv:list");
 }
@@ -497,6 +501,38 @@ export function registerPositionsView(bot: Bot): void {
     const r = await resolvePosition(ctx, ctx.match![1]);
     if (!r) return void (await editOrReply(ctx, ctx.callbackQuery.message?.message_id, "Posisi sudah tertutup / tidak ditemukan.", new InlineKeyboard().text("📊 Positions", "pv:lref")));
     await showPositionDetail(ctx, r.p);
+  });
+
+  bot.callbackQuery(/^pv:live:([1-9A-HJ-NP-Za-km-z]{32,44})$/, async (ctx) => {
+    const addr = ctx.match![1];
+    if (!isLiveWebRunning()) {
+      await ctx.answerCallbackQuery({
+        text: "Live web OFF (set LIVE_WEB_ENABLED=true). Demo: npm run live-demo",
+        show_alert: true,
+      });
+      return;
+    }
+    let r: Resolved | null = null;
+    try {
+      r = await resolvePosition(ctx, addr, false);
+    } catch {
+      await ctx.answerCallbackQuery({ text: "Gagal resolve posisi", show_alert: true });
+      return;
+    }
+    const currency = currentDisplayCurrency() as "USD" | "IDR" | "SOL";
+    const url = r
+      ? createLiveViewUrl({ position: r.p.position, pool: r.p.pool, currency })
+      : createLiveViewUrl({ demo: true, currency });
+    if (!url) {
+      await ctx.answerCallbackQuery({ text: "Live web tidak aktif", show_alert: true });
+      return;
+    }
+    await ctx.answerCallbackQuery();
+    const label = r ? `${r.p.pair || "TOKEN/SOL"} · read-only` : "DEMO";
+    await ctx.reply(
+      [`📡 **Live Bins** — ${label}`, "", `Buka (read-only, tanpa key):`, url, "", "_Link unik · jangan share publik jika posisi real._"].join("\n"),
+      { link_preview_options: { is_disabled: true } },
+    );
   });
 
   // Legacy index-based buttons (old messages): send to a fresh list instead of dead-ending.

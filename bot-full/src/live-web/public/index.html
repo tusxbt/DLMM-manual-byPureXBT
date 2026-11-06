@@ -1,0 +1,66 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="color-scheme" content="dark" />
+  <title>Live Bins · Tusvicious</title>
+  <link rel="stylesheet" href="/style.css" />
+</head>
+<body>
+  <div class="wrap">
+    <header class="top">
+      <div class="brand">
+        <span class="logo">◆</span>
+        <div>
+          <div class="title">Live Bins</div>
+          <div class="sub" id="pairLine">—</div>
+        </div>
+      </div>
+      <div class="badges">
+        <span class="badge demo" id="demoBadge" hidden>DEMO</span>
+        <span class="badge range" id="rangeBadge">—</span>
+        <span class="badge live" id="liveBadge">● connecting</span>
+      </div>
+    </header>
+
+    <section class="metrics">
+      <div class="card">
+        <div class="k">PnL</div>
+        <div class="v" id="pnl">—</div>
+      </div>
+      <div class="card">
+        <div class="k">Fees</div>
+        <div class="v" id="fees">—</div>
+      </div>
+      <div class="card">
+        <div class="k">Value</div>
+        <div class="v" id="value">—</div>
+      </div>
+      <div class="card">
+        <div class="k">Capital</div>
+        <div class="v" id="capital">—</div>
+      </div>
+    </section>
+
+    <section class="chart-card">
+      <div class="chart-head">
+        <span>Liquidity bins</span>
+        <span class="muted" id="binMeta">—</span>
+      </div>
+      <div class="chart" id="chart" aria-label="Live bin chart"></div>
+      <div class="axis">
+        <span id="minPx">—</span>
+        <span class="active-lbl" id="activeLbl">active —</span>
+        <span id="maxPx">—</span>
+      </div>
+    </section>
+
+    <footer class="foot">
+      <div>Read-only · no keys · no txs</div>
+      <div class="muted" id="ts">—</div>
+    </footer>
+  </div>
+  <script src="/app.js"></script>
+</body>
+</html>

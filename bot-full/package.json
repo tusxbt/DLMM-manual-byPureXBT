@@ -3,19 +3,20 @@
   "version": "1.0.0",
   "private": true,
   "type": "module",
-  "description": "Manual Meteora DLMM Telegram bot — self-signs with WALLET_PRIVATE_KEY from .env (separate small wallet only)",
+  "description": "Manual Meteora DLMM Telegram bot \u2014 self-signs with WALLET_PRIVATE_KEY from .env (separate small wallet only)",
   "engines": {
     "node": ">=20"
   },
   "scripts": {
     "postinstall": "node scripts/patch-anchor.js || true",
     "dev": "tsx src/index.ts",
-    "build": "tsc -p tsconfig.json",
+    "build": "tsc -p tsconfig.json && mkdir -p dist/live-web && cp -R src/live-web/public dist/live-web/",
     "start": "node dist/index.js",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "tsx --test test/*.test.ts",
     "smoke": "tsx scripts/smoke-read.ts",
-    "scan": "tsx scripts/scan.ts"
+    "scan": "tsx scripts/scan.ts",
+    "live-demo": "LIVE_WEB_ENABLED=true LIVE_WEB_HOST=127.0.0.1 LIVE_WEB_PORT=8788 tsx scripts/live-web-demo.ts"
   },
   "dependencies": {
     "@meteora-ag/dlmm": "1.9.4",
