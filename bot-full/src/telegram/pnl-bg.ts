@@ -1,6 +1,8 @@
 /**
  * Per-user PnL card background: DATA_DIR/users/<telegramId>/pnl-bg.jpg (owner too).
  * Upload → validate (image, ≤10MB) → cover-crop 1200x800 → JPEG. Env PNL_BG_PATH = global fallback.
+ * All card renderers (position + daily/week/month/token) paint via src/render/card-bg.ts — one asset,
+ * every card. Change the upload / PNL_BG_PATH / assets/pnl-bg.jpg → all cards update.
  */
 import fs from "node:fs";
 import path from "node:path";

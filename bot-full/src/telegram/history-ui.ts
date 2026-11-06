@@ -9,6 +9,8 @@ import { addHistory, byDay, byToken, dayLabel, inPeriod, periodRange, type Perio
 import { loadTrackedPositions } from "../store/positions.js";
 import { fetchPoolPnl } from "../engine/meteora-pnl.js";
 import { renderSummaryCard, type SummaryCardData } from "../render/daily-card.js";
+import { preloadPnlBackground } from "../render/card-bg.js";
+import { bgForCurrentUser } from "./pnl-bg.js";
 import { buildPnlCardPng, cardDataFromSnapshot, kstStamp, type PositionSnapshot } from "./pnl-send.js";
 
 export const PAGE = 8;
@@ -21,6 +23,10 @@ const shortTime = (iso: string) =>
   new Date(iso).toLocaleString("en-GB", { timeZone: "Asia/Seoul", day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit", hour12: false }).replace(",", "");
 
 // ── record from a finished close (pure; exported for tests) ──
+function withCardBg<T extends SummaryCardData>(d: T): T {
+  return Object.assign(d, bgForCurrentUser());
+}
+
 export function recordFromSnapshot(snap: PositionSnapshot, kind: PnlRecord["kind"], closedAt = new Date()): PnlRecord {
   const d = cardDataFromSnapshot(snap, true, closedAt);
   const pair = (snap.pair || d.pair || "TOKEN/SOL").replace("-", "/");
@@ -393,7 +399,8 @@ export function registerHistoryUi(bot: Bot): void {
       const day = ctx.match![3];
       const days = day ? 1 : Number(ctx.match![2]);
       const now = day ? new Date(`${day}T12:00:00+09:00`) : new Date();
-      const d = dailyCardData(list, days, now);
+      const d = withCardBg(dailyCardData(list, days, now));
+      await preloadPnlBackground(d.background);
       const png = renderSummaryCard(d);
       await ctx.replyWithPhoto(new InputFile(png, "daily.png"), {
         caption: `📅 ${d.title} · ${usd(d.totalUsd)} · ${d.count} posisi`,
@@ -410,7 +417,8 @@ export function registerHistoryUi(bot: Bot): void {
   const sendCard = async (ctx: Context, d: SummaryCardData | null, back: string) => {
     if (!d) return void (await ctx.reply("Tidak ada data."));
     try {
-      await ctx.replyWithPhoto(new InputFile(renderSummaryCard(d), "pnl-summary.png"), {
+      await preloadPnlBackground(bgForCurrentUser().background);
+      await ctx.replyWithPhoto(new InputFile(renderSummaryCard(withCardBg(d)), "pnl-summary.png"), {
         caption: `📈 ${d.kicker} · ${d.title} · ${usd(d.totalUsd)}${pct(d.pnlPct)} · ${d.count} posisi`,
         reply_markup: new InlineKeyboard().text("⬅️ Kembali", back).text("📜 Riwayat", "hi:menu"),
       });

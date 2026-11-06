@@ -3,10 +3,11 @@
  */
 import { createRequire } from "node:module";
 import path from "node:path";
-import fs from "node:fs";
 import { fileURLToPath } from "node:url";
-import { createCanvas, GlobalFonts, Image, loadImage, type SKRSContext2D } from "@napi-rs/canvas";
+import { createCanvas, GlobalFonts, type SKRSContext2D } from "@napi-rs/canvas";
 import type { Candle } from "../engine/ohlcv.js";
+import { paintCardBackground, preloadPnlBackground } from "./card-bg.js";
+export { preloadPnlBackground } from "./card-bg.js";
 
 const require = createRequire(import.meta.url);
 let fontsReady = false;
@@ -115,31 +116,6 @@ const ACCENT = "#a78bfa"; // brand violet
 const UP = "#34d399";
 const DOWN = "#fb7185";
 const ASSETS = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../assets");
-const bgCache = new Map<string, Image | null>();
-const bgFile = (p?: string | null) => p || process.env.PNL_BG_PATH || "";
-const bgKey = (f: string) => {
-  try {
-    return `${f}@${fs.statSync(f).mtimeMs}`;
-  } catch {
-    return `${f}@none`;
-  }
-};
-/** Decode background (async in napi-rs) — call before renderPnlCard. Never throws. Cache keyed by mtime. */
-export async function preloadPnlBackground(p?: string | null): Promise<void> {
-  const f = bgFile(p);
-  if (!f) return;
-  const k = bgKey(f);
-  if (bgCache.has(k)) return;
-  try {
-    bgCache.set(k, fs.existsSync(f) ? await loadImage(f) : null);
-  } catch {
-    bgCache.set(k, null);
-  }
-}
-function loadBg(p?: string | null): Image | null {
-  const f = bgFile(p);
-  return f ? (bgCache.get(bgKey(f)) ?? null) : null;
-}
 
 let thinReady = false;
 function ensureThin(): void {
@@ -172,20 +148,7 @@ export function renderPnlCard(d: PnlCardData): Buffer {
   const col = d.pnlUsd == null ? MUTED : up ? UP : DOWN;
   const rgb = up ? "52,211,153" : "251,113,133";
 
-  ctx.fillStyle = "#0b0f14";
-  ctx.fillRect(0, 0, W, H);
-  const bg = loadBg(d.background);
-  if (bg) {
-    const k = Math.max(W / bg.width, H / bg.height);
-    const blur = Math.max(0, Math.min(30, d.bgBlur ?? Number(process.env.PNL_BG_BLUR ?? 0)));
-    if (blur > 0) ctx.filter = `blur(${blur}px)`;
-    const m = blur * 2; // bleed so blurred edges stay filled
-    ctx.drawImage(bg, (W - bg.width * k) / 2 - m, (H - bg.height * k) / 2 - m, bg.width * k + 2 * m, bg.height * k + 2 * m);
-    ctx.filter = "none";
-    const dark = Math.max(20, Math.min(95, d.bgDarkPct ?? 70)) / 100; // never fully bright: text must stay readable
-    ctx.fillStyle = `rgba(11,15,20,${dark})`;
-    ctx.fillRect(0, 0, W, H);
-  }
+  paintCardBackground(ctx, W, H, { background: d.background, bgDarkPct: d.bgDarkPct, bgBlur: d.bgBlur });
   // one soft accent: glow behind the number
   const g = ctx.createRadialGradient(W / 2, 250, 0, W / 2, 250, 420);
   g.addColorStop(0, `rgba(${rgb},0.13)`);
