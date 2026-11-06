@@ -846,6 +846,7 @@ export const BOT_COMMANDS: { command: string; description: string }[] = [
   { command: "menu", description: "Menu utama (tombol)" },
   { command: "add", description: "Buka posisi DLMM (panel edit)" },
   { command: "positions", description: "Lihat posisi terbuka" },
+  { command: "web", description: "Live Bins mini web (read-only)" },
   { command: "scan", description: "Scan pool DLMM SOL teratas (info saja)" },
   { command: "claim", description: "Claim fee posisi" },
   { command: "remove", description: "Tarik 100% & tutup posisi" },

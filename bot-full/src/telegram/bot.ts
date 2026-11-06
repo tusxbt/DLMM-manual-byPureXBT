@@ -50,7 +50,7 @@ import {
   executeReshape,
 } from "./reshape-handlers.js";
 import { registerAddPanel, registerSettingsPanel, startAdd, showSettings, showPoolPickerForPanel, bottomKeyboard, replyKbAction } from "./panels.js";
-import { registerPositionsView, showPositionCards } from "./positions-view.js";
+import { registerPositionsView, showPositionCards, showWebLive } from "./positions-view.js";
 import { openRepositionPanel } from "./panels.js";
 import { startZapout, onZapoutPos, executeZapout } from "./zapout-handlers.js";
 import { detectMintAddress } from "../engine/mint-detect.js";
@@ -124,6 +124,7 @@ export function createBot(): Bot {
 
   bot.command("balance", async (ctx) => showWallet(ctx));
   bot.command("positions", async (ctx) => showPositionCards(ctx));
+  bot.command("web", async (ctx) => showWebLive(ctx));
   bot.command("settings", async (ctx) => showSettings(ctx));
   bot.command("pools", async (ctx) => {
     const q = ctx.match?.trim();
@@ -168,6 +169,7 @@ export function createBot(): Bot {
     const map: Record<string, (c: Context) => Promise<void>> = {
       add: startAdd,
       positions: showPositionCards,
+      web: showWebLive,
       history: showHistory,
       claim: startClaim,
       remove: startRemove,

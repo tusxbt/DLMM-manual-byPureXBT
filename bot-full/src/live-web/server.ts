@@ -56,6 +56,11 @@ export function createLiveViewUrl(opts: {
   demo?: boolean;
   position?: string;
   pool?: string;
+  pair?: string;
+  strategy?: string;
+  ownerUserId?: string;
+  isOwner?: boolean;
+  ownerWallet?: string;
   currency?: LiveSnapshot["currency"];
 }): string | null {
   if (!cfg?.enabled || !server) return null;
@@ -63,6 +68,11 @@ export function createLiveViewUrl(opts: {
     demo: !!opts.demo || !opts.position,
     position: opts.position,
     pool: opts.pool,
+    pair: opts.pair,
+    strategy: opts.strategy,
+    ownerUserId: opts.ownerUserId,
+    isOwner: opts.isOwner,
+    ownerWallet: opts.ownerWallet,
     currency: opts.currency ?? "USD",
   });
   return `${cfg.publicBaseUrl}/v/${session.token}`;

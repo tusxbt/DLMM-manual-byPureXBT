@@ -38,6 +38,14 @@ export type LiveSessionInfo = {
   demo: boolean;
   position?: string;
   pool?: string;
+  /** From store / PositionCard at mint time */
+  pair?: string;
+  strategy?: string;
+  /** Telegram user who minted — hub re-enters their wallet scope for polls */
+  ownerUserId?: string;
+  isOwner?: boolean;
+  /** Wallet pubkey that owned the position at mint (read-only check) */
+  ownerWallet?: string;
   currency: LiveSnapshot["currency"];
   createdAt: number;
   lastSeenAt: number;

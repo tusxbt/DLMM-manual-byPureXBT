@@ -29,6 +29,7 @@ import { getBalances } from "../engine/connection.js";
 import { onZapoutPos } from "./zapout-handlers.js";
 import { createLiveViewUrl, isLiveWebRunning } from "../live-web/index.js";
 import { currentDisplayCurrency } from "../display-money.js";
+import { currentUser } from "../users/context.js";
 
 const key = (ctx: Context) => String(ctx.chat?.id ?? "");
 export const usdOrNa = (n: number | null | undefined) => (n == null || !Number.isFinite(n) ? "n/a (harga tidak tersedia)" : fmtUsd(n));
@@ -336,6 +337,130 @@ function confirmFor(kind: "claim" | "remove", p: PositionCard, reposition: boole
 }
 
 
+
+/** Mint a read-only live URL for a card owned by the current Telegram user. */
+export function mintLiveUrlForCard(p: Pick<PositionCard, "position" | "pool" | "pair" | "strategy_text" | "pool_name">): string | null {
+  if (!isLiveWebRunning()) return null;
+  const currency = currentDisplayCurrency() as "USD" | "IDR" | "SOL";
+  const me = currentUser();
+  let ownerWallet: string | undefined;
+  try {
+    ownerWallet = loadConfig({ requireTelegram: false, skipWallet: true }).walletPublicKey.toBase58();
+  } catch {
+    ownerWallet = undefined;
+  }
+  return createLiveViewUrl({
+    position: p.position,
+    pool: p.pool,
+    pair: p.pair || p.pool_name?.replace(/-/g, "/"),
+    strategy: p.strategy_text,
+    currency,
+    ownerUserId: me?.userId,
+    isOwner: me?.isOwner,
+    ownerWallet,
+  });
+}
+
+/** Pure: /web list text + keyboard (Live Bins per position). */
+export function renderWebLiveMenu(cards: PositionCard[]): { text: string; kb: InlineKeyboard } {
+  const kb = new InlineKeyboard();
+  if (cards.length === 0) {
+    return {
+      text: [
+        "📡 **Live Bins**",
+        "",
+        "Belum ada posisi aktif di wallet ini.",
+        "Buka LP dulu lewat /add, lalu /web lagi.",
+      ].join("\n"),
+      kb: kb.text("🚀 Add LP", "menu:add").row().text("📊 Positions", "pv:lref"),
+    };
+  }
+  const lines = [
+    "📡 **Live Bins** — read-only",
+    "",
+    `${cards.length} posisi aktif. Tap untuk buka mini web (token unik, tanpa key).`,
+    "",
+  ];
+  for (const c of cards.slice(0, 20)) {
+    const label = `${c.pair || "TOKEN/SOL"} · ${shortAddr(c.position)}`;
+    lines.push(`• ${label}${c.strategy_text ? ` · ${c.strategy_text}` : ""}`);
+    kb.text(`📡 ${label}`.slice(0, 64), `pv:live:${c.position}`).row();
+  }
+  if (cards.length > 20) lines.push(`…+${cards.length - 20} lagi — buka /positions`);
+  lines.push("", "_Hanya posisi wallet kamu. Jangan share link publik._");
+  kb.text("🔄 Refresh", "web:ref").row().text("📊 Positions", "pv:lref");
+  return { text: lines.join("\n"), kb };
+}
+
+/** /web command body. */
+export async function showWebLive(ctx: Context, opts: { fresh?: boolean } = {}): Promise<void> {
+  if (!isLiveWebRunning()) {
+    await ctx.reply(
+      [
+        "📡 **Live Bins**",
+        "",
+        "Mini web sedang **OFF** (`LIVE_WEB_ENABLED=false`).",
+        "Aktifkan di `.env` lalu restart bot, atau coba demo lokal: `npm run live-demo`.",
+      ].join("\n"),
+    );
+    return;
+  }
+  const wait = await ctx.reply("📡 Memuat posisi…");
+  let cards: PositionCard[];
+  try {
+    cards = await loadCards({ fresh: opts.fresh !== false });
+  } catch (e) {
+    await ctx.api.editMessageText(ctx.chat!.id, wait.message_id, `❌ ${redactSecrets((e as Error).message)}`).catch(() => undefined);
+    return;
+  }
+  if (cards.length === 1) {
+    const url = mintLiveUrlForCard(cards[0]);
+    if (!url) {
+      await ctx.api.editMessageText(ctx.chat!.id, wait.message_id, "Live web tidak aktif.").catch(() => undefined);
+      return;
+    }
+    const c = cards[0];
+    const kb = new InlineKeyboard()
+      .url("📡 Buka Live Bins", url)
+      .row()
+      .text("📡 Pilih posisi lain", "web:ref")
+      .text("📊 Positions", "pv:lref");
+    await ctx.api
+      .editMessageText(
+        ctx.chat!.id,
+        wait.message_id,
+        [
+          `📡 **Live Bins** — ${c.pair || "TOKEN/SOL"} · read-only`,
+          c.strategy_text ? `Strategy: ${c.strategy_text}` : null,
+          "",
+          "Buka (token unik, tanpa key):",
+          url,
+          "",
+          "_Jangan share link publik._",
+        ]
+          .filter((x) => x !== null)
+          .join("\n"),
+        { reply_markup: kb, link_preview_options: { is_disabled: true } },
+      )
+      .catch(async () => {
+        await ctx.reply(
+          [`📡 **Live Bins** — ${c.pair || "TOKEN/SOL"}`, "", url].join("\n"),
+          { reply_markup: kb, link_preview_options: { is_disabled: true } },
+        );
+      });
+    return;
+  }
+  const m = renderWebLiveMenu(cards);
+  await ctx.api
+    .editMessageText(ctx.chat!.id, wait.message_id, m.text, {
+      reply_markup: m.kb,
+      link_preview_options: { is_disabled: true },
+    })
+    .catch(async () => {
+      await ctx.reply(m.text, { reply_markup: m.kb, link_preview_options: { is_disabled: true } });
+    });
+}
+
 /** Detail = text card. Legacy photo Details (old bins chart) are replaced by a text message. */
 export async function showPositionDetail(ctx: Context, p: LivePosition): Promise<void> {
   const msg = ctx.callbackQuery?.message;
@@ -519,22 +644,28 @@ export function registerPositionsView(bot: Bot): void {
       await ctx.answerCallbackQuery({ text: "Gagal resolve posisi", show_alert: true });
       return;
     }
-    const currency = currentDisplayCurrency() as "USD" | "IDR" | "SOL";
-    const url = r
-      ? createLiveViewUrl({ position: r.p.position, pool: r.p.pool, currency })
-      : createLiveViewUrl({ demo: true, currency });
+    if (!r) {
+      await ctx.answerCallbackQuery({ text: "Posisi tidak ada / bukan milikmu", show_alert: true });
+      return;
+    }
+    const url = mintLiveUrlForCard(r.p);
     if (!url) {
       await ctx.answerCallbackQuery({ text: "Live web tidak aktif", show_alert: true });
       return;
     }
     await ctx.answerCallbackQuery();
-    const label = r ? `${r.p.pair || "TOKEN/SOL"} · read-only` : "DEMO";
+    const label = `${r.p.pair || "TOKEN/SOL"} · read-only`;
+    const kb = new InlineKeyboard().url("📡 Buka Live Bins", url);
     await ctx.reply(
-      [`📡 **Live Bins** — ${label}`, "", `Buka (read-only, tanpa key):`, url, "", "_Link unik · jangan share publik jika posisi real._"].join("\n"),
-      { link_preview_options: { is_disabled: true } },
+      [`📡 **Live Bins** — ${label}`, "", `Buka (read-only, tanpa key):`, url, "", "_Link unik · jangan share publik._"].join("\n"),
+      { reply_markup: kb, link_preview_options: { is_disabled: true } },
     );
   });
 
+  bot.callbackQuery("web:ref", async (ctx) => {
+    await ctx.answerCallbackQuery({ text: "Refresh…" });
+    await showWebLive(ctx, { fresh: true });
+  });
   // Legacy index-based buttons (old messages): send to a fresh list instead of dead-ending.
   bot.callbackQuery(/^pv:(open|exit|claim|zap|repo|flip|ref|card):(\d+)$/, async (ctx) => {
     await ctx.answerCallbackQuery({ text: "Menu lama — memuat ulang…" });

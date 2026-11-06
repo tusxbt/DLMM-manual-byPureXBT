@@ -6,6 +6,11 @@ export type SnapshotFetcher = (args: {
   position: string;
   pool: string;
   currency: LiveSnapshot["currency"];
+  pair?: string;
+  strategy?: string;
+  ownerUserId?: string;
+  isOwner?: boolean;
+  ownerWallet?: string;
 }) => Promise<LiveSnapshot | null>;
 
 type Client = {
@@ -102,6 +107,11 @@ async function tick(): Promise<void> {
           position: s.position!,
           pool: s.pool!,
           currency: s.currency,
+          pair: s.pair,
+          strategy: s.strategy,
+          ownerUserId: s.ownerUserId,
+          isOwner: s.isOwner,
+          ownerWallet: s.ownerWallet,
         });
         if (snap) broadcast(s.token, { ...snap, demo: false });
       } catch {
