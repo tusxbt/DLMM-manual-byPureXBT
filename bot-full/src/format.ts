@@ -1,3 +1,4 @@
+export { fmtMoney, fmtMoneyShort, currentDisplayCurrency } from "./display-money.js";
 export function fmtNum(n: number | null | undefined, digits = 4): string {
   if (n == null || !Number.isFinite(n)) return "—";
   return n.toLocaleString("en-US", { maximumFractionDigits: digits });

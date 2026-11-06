@@ -5,6 +5,8 @@ import { InputFile, type Context } from "grammy";
 import { log, redactSecrets } from "../logger.js";
 import { fetchOhlcv } from "../engine/ohlcv.js";
 import { renderPnlCard, preloadPnlBackground, type PnlCardData } from "../render/pnl-card.js";
+import { ensureFxRates } from "../engine/fx.js";
+import { withDisplayMoney, currentDisplayCurrency, fmtMoney } from "../display-money.js";
 import { fmtAge } from "./positions-view.js";
 import { getTrackedPosition, type TrackedPosition } from "../store/positions.js";
 
@@ -176,14 +178,17 @@ export async function buildPnlCardPng(s: PositionSnapshot, closed: boolean, at?:
   }
   Object.assign(d, bgForCurrentUser());
   await preloadPnlBackground(d.background);
-  return renderPnlCard(d);
+  const rates = await ensureFxRates();
+  const currency = currentDisplayCurrency();
+  return withDisplayMoney(currency, rates, () => renderPnlCard(d));
 }
 
 export async function sendPnlCard(ctx: Context, s: PositionSnapshot, closed: boolean): Promise<void> {
   try {
     const d = cardDataFromSnapshot(s, closed);
     const png = await buildPnlCardPng(s, closed);
-    const pnl = d.pnlUsd == null ? "PnL n/a" : `PnL ${d.pnlUsd >= 0 ? "+" : "-"}$${Math.abs(d.pnlUsd).toFixed(2)} (${d.pnlPct!.toFixed(2)}%)`;
+    await ensureFxRates();
+    const pnl = d.pnlUsd == null ? "PnL n/a" : `PnL ${fmtMoney(d.pnlUsd, { sign: true })} (${d.pnlPct!.toFixed(2)}%)`;
     await ctx.replyWithPhoto(new InputFile(png, "pnl.png"), {
       caption: `📈 **${d.pair}** · ${closed ? "closed" : "open"} · ${pnl}`,
     });

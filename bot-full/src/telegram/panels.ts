@@ -20,6 +20,7 @@ const retry = async (p: Promise<unknown>): Promise<typeof RETRY> => {
 };
 import { confirmKeyboard, mainMenuKeyboard } from "./menus.js";
 import { loadSettings, saveSettings, type Settings } from "../store/settings.js";
+import { CURRENCIES, DISPLAY_CURRENCY_CODES, coerceDisplayCurrency, ensureFxRates, fxCacheMeta, getFxRatesCached } from "../engine/fx.js";
 import { searchPools, getActiveBin } from "../engine/dlmm-read.js";
 import { buildAddLiquidityTxs } from "../engine/dlmm-build.js";
 import { getSolUsd } from "../engine/prices.js";
@@ -537,6 +538,32 @@ export function replyKbAction(text: string): keyof typeof REPLY_KB_LABELS | null
 
 // ── Settings panel ──────────────────────────────────────────────
 
+
+function fxSettingsText(note?: string): string {
+  const cur = loadSettings().displayCurrency;
+  const rates = getFxRatesCached();
+  const meta = fxCacheMeta();
+  return [
+    "💱 **Mata uang tampilan**",
+    note ? `ℹ️ ${note}` : null,
+    "",
+    "Semua nilai di menu & PnL card mengikuti pilihan ini (data tetap disimpan USD).",
+    `Sekarang: **${CURRENCIES[cur]?.label ?? cur}**`,
+    `Kurs: 1 USD = ${rates.IDR.toFixed(0)} IDR · 1 SOL ≈ $${(rates.SOL > 0 ? 1 / rates.SOL : 0).toFixed(2)}`,
+    `Cache: ${meta.src} (${Math.round(meta.ageMs / 1000)}s)`,
+    "",
+    "Tambah mata uang lain: perluas CURRENCIES + rate di src/engine/fx.ts.",
+  ].filter((x) => x != null).join("\n");
+}
+function fxSettingsKb(): InlineKeyboard {
+  const cur = loadSettings().displayCurrency;
+  const kb = new InlineKeyboard();
+  for (const code of DISPLAY_CURRENCY_CODES) {
+    kb.text(`${cur === code ? "✓ " : ""}${CURRENCIES[code].label}`, `st:fx:${code}`);
+  }
+  return kb.row().text("🔄 Refresh kurs", "st:fx:refresh").text("⬅️ Settings", "st:back");
+}
+
 export function settingsText(note?: string): string {
   const st = loadSettings();
   const cfg = loadConfig({ requireTelegram: false, skipWallet: true });
@@ -557,6 +584,10 @@ export function settingsText(note?: string): string {
       kv("Range %", st.rangePresets.map((r) => pctLabel(r)).join(", ") || "-"),
       kv("Amount", `${st.amountPresets.join(" / ")} SOL`),
       kv("Mix", `BidAsk ${st.mixBidAskPct} / Spot ${100 - st.mixBidAskPct}`),
+    ]),
+    section("💱 Mata uang tampilan", [
+      kv("Aktif", CURRENCIES[st.displayCurrency]?.label ?? st.displayCurrency),
+      `Kurs cache: ${fxCacheMeta().src} · USD→IDR ${getFxRatesCached().IDR.toFixed(0)} · SOL $${(1 / getFxRatesCached().SOL).toFixed(2)}`,
     ]),
     section("🔒 Dari .env", [
       kv("Mode", cfg.dryRun ? "🧪 DRY_RUN" : "⚠️ LIVE"),
@@ -584,6 +615,7 @@ function settingsKb(): InlineKeyboard {
     .row()
     .text("✏️ Mix ratio", "st:edit:mix")
     .text("🖼 Background PnL", "st:bg")
+    .text("💱 Mata uang", "st:fx")
     .row()
     .text("⬅️ Menu", "menu:cancel");
 }
@@ -596,6 +628,7 @@ async function renderSettings(ctx: Context, note?: string): Promise<void> {
 export async function showSettings(ctx: Context): Promise<void> {
   const s = getSession(key(ctx));
   s.data.settingsMsgId = undefined;
+  try { await ensureFxRates(); } catch { /* soft */ }
   await renderSettings(ctx);
 }
 
@@ -660,6 +693,33 @@ export function registerSettingsPanel(bot: Bot): void {
   });
 
   // Per-slot editing of /add quick-pick buttons (bins + amount), per user
+  bot.callbackQuery("st:fx", async (ctx) => {
+    await ctx.answerCallbackQuery();
+    const s = getSession(key(ctx));
+    s.data.settingsMsgId = ctx.callbackQuery.message?.message_id ?? s.data.settingsMsgId;
+    try { await ensureFxRates(); } catch { /* soft */ }
+    s.data.settingsMsgId = await upsert(ctx, s.data.settingsMsgId, fxSettingsText(), fxSettingsKb());
+  });
+  bot.callbackQuery("st:fx:refresh", async (ctx) => {
+    await ctx.answerCallbackQuery({ text: "🔄 Kurs…" });
+    const s = getSession(key(ctx));
+    s.data.settingsMsgId = ctx.callbackQuery.message?.message_id ?? s.data.settingsMsgId;
+    try {
+      const { refreshFxRates } = await import("../engine/fx.js");
+      await refreshFxRates(true);
+      s.data.settingsMsgId = await upsert(ctx, s.data.settingsMsgId, fxSettingsText("Kurs diperbarui."), fxSettingsKb());
+    } catch (e) {
+      s.data.settingsMsgId = await upsert(ctx, s.data.settingsMsgId, fxSettingsText(`Gagal: ${(e as Error).message.slice(0, 80)}`), fxSettingsKb());
+    }
+  });
+  bot.callbackQuery(/^st:fx:(USD|IDR|SOL)$/, async (ctx) => {
+    await ctx.answerCallbackQuery();
+    const st = loadSettings();
+    st.displayCurrency = coerceDisplayCurrency(ctx.match![1]);
+    saveSettings(st);
+    await renderSettings(ctx, `Mata uang tampilan: ${CURRENCIES[st.displayCurrency].label}`);
+  });
+
   bot.callbackQuery("st:pre", async (ctx) => {
     await ctx.answerCallbackQuery();
     const s = getSession(key(ctx));

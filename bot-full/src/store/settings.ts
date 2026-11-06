@@ -25,6 +25,8 @@ export type Settings = {
   swapSlippagePct: number;
   /** Meteora DLMM add-liquidity slippage in percent (0.1–50). Passed as-is to SDK. */
   liqSlippagePct: number;
+  /** Display currency for menus + PnL cards (USD base stored). */
+  displayCurrency: "USD" | "IDR" | "SOL";
 };
 
 const SLIPPAGE_MIN = 0.1;
@@ -89,6 +91,7 @@ function buildDefault(): Settings {
     jupPriorityMaxLamports: envInt("JUP_PRIORITY_MAX_LAMPORTS", 1_000_000, 0, 10_000_000),
     swapSlippagePct: envPct("SWAP_SLIPPAGE_PCT", 10),
     liqSlippagePct: envPct("LIQ_SLIPPAGE_PCT", 10),
+    displayCurrency: "USD",
   };
 }
 
@@ -119,6 +122,9 @@ export function loadSettings(): Settings {
     jupPriorityMaxLamports: clampInt(s.jupPriorityMaxLamports, defaults.jupPriorityMaxLamports, 0, 10_000_000),
     swapSlippagePct: coercePct(Number(s.swapSlippagePct ?? defaults.swapSlippagePct), defaults.swapSlippagePct),
     liqSlippagePct: coercePct(Number(s.liqSlippagePct ?? defaults.liqSlippagePct), defaults.liqSlippagePct),
+    displayCurrency: (["USD", "IDR", "SOL"].includes(String(s.displayCurrency || "").toUpperCase())
+      ? String(s.displayCurrency).toUpperCase()
+      : "USD") as Settings["displayCurrency"],
   };
 }
 

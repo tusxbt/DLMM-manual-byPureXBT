@@ -11,12 +11,13 @@ import { fetchPoolPnl } from "../engine/meteora-pnl.js";
 import { renderSummaryCard, type SummaryCardData } from "../render/daily-card.js";
 import { preloadPnlBackground } from "../render/card-bg.js";
 import { bgForCurrentUser } from "./pnl-bg.js";
+import { fmtMoney, withDisplayMoney, currentDisplayCurrency } from "../display-money.js";
+import { ensureFxRates } from "../engine/fx.js";
 import { buildPnlCardPng, cardDataFromSnapshot, kstStamp, type PositionSnapshot } from "./pnl-send.js";
 
 export const PAGE = 8;
 
-const usd = (n: number | null | undefined, sign = true) =>
-  n == null || !Number.isFinite(n) ? "n/a" : `${sign ? (n >= 0 ? "+" : "-") : ""}$${Math.abs(n).toFixed(2)}`;
+const usd = (n: number | null | undefined, sign = true) => fmtMoney(n, { sign, na: "n/a" });
 const pct = (n: number | null | undefined) => (n == null ? "" : ` (${n >= 0 ? "+" : ""}${n.toFixed(2)}%)`);
 const dot = (n: number | null | undefined) => (n == null ? "⚪" : n >= 0 ? "🟢" : "🔴");
 const shortTime = (iso: string) =>
@@ -417,7 +418,8 @@ export function registerHistoryUi(bot: Bot): void {
       const now = day ? new Date(`${day}T12:00:00+09:00`) : new Date();
       const d = withCardBg(dailyCardData(list, days, now));
       await preloadPnlBackground(d.background);
-      const png = renderSummaryCard(d);
+      const rates = await ensureFxRates();
+      const png = withDisplayMoney(currentDisplayCurrency(), rates, () => renderSummaryCard(d));
       await ctx.replyWithPhoto(new InputFile(png, "daily.png"), {
         caption: `📅 ${d.title} · ${usd(d.totalUsd)} · ${d.count} posisi`,
         reply_markup: new InlineKeyboard().text("⬅️ Riwayat", "hi:menu"),
@@ -434,7 +436,9 @@ export function registerHistoryUi(bot: Bot): void {
     if (!d) return void (await ctx.reply("Tidak ada data."));
     try {
       await preloadPnlBackground(bgForCurrentUser().background);
-      await ctx.replyWithPhoto(new InputFile(renderSummaryCard(withCardBg(d)), "pnl-summary.png"), {
+      const rates = await ensureFxRates();
+      const png = withDisplayMoney(currentDisplayCurrency(), rates, () => renderSummaryCard(withCardBg(d)));
+      await ctx.replyWithPhoto(new InputFile(png, "pnl-summary.png"), {
         caption: `📈 ${d.kicker} · ${d.title} · ${usd(d.totalUsd)}${pct(d.pnlPct)} · ${d.count} posisi`,
         reply_markup: new InlineKeyboard().text("⬅️ Kembali", back).text("📜 Riwayat", "hi:menu"),
       });

@@ -6,6 +6,7 @@
 import { createCanvas, type SKRSContext2D } from "@napi-rs/canvas";
 import { ensureCardFonts } from "./pnl-card.js";
 import { paintCardBackground, type CardBgOpts } from "./card-bg.js";
+import { activeDisplay, fmtMoney, fmtMoneyShort } from "../display-money.js";
 
 export type SummaryBar = { label: string; pnlUsd: number; empty?: boolean };
 export type SummaryCardData = {
@@ -38,20 +39,15 @@ export type DailyCardData = SummaryCardData;
 const MUTED = "#8a94a8", TEXT = "#e8ecf4", UP = "#34d399", DOWN = "#fb7185";
 const LINE = "rgba(232,236,244,0.92)";
 const LINE_SOFT = "rgba(232,236,244,0.28)";
-export const money = (n: number | null | undefined, sign = false) =>
-  n == null || !Number.isFinite(n)
-    ? "n/a"
-    : `${sign ? (n >= 0 ? "+" : "-") : n < 0 ? "-" : ""}$${Math.abs(n).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+export const money = (n: number | null | undefined, sign = false) => fmtMoney(n, { sign, ...activeDisplay(), na: "n/a" });
 
 const thin = (ctx: SKRSContext2D, px: number) => (ctx.font = `${px}px CardText, CardSans, sans-serif`);
 const semi = (ctx: SKRSContext2D, px: number) => (ctx.font = `${px}px CardSemi, CardSansBold, sans-serif`);
 const numf = (ctx: SKRSContext2D, px: number) => (ctx.font = `${px}px CardNum, CardSansBold, sans-serif`);
 
 const shortMoney = (n: number) => {
-  const a = Math.abs(n);
-  const body =
-    a >= 1000 ? `$${(a / 1000).toFixed(a >= 10000 ? 0 : 1)}k` : `$${a.toFixed(a >= 100 ? 0 : 2)}`;
-  return `${n >= 0 ? "+" : "−"}${body}`;
+  // n is already in display units when drawn from converted bars; here bars stay USD and convert in pill
+  return fmtMoneyShort(n, activeDisplay());
 };
 
 /**

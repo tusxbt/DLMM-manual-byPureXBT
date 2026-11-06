@@ -8,7 +8,8 @@ import { presentConfirm, setConfirmRunner } from "./confirm-ui.js";
 import type { ConfirmRequest } from "../engine/confirm.js";
 import { Bot, InlineKeyboard, type Context } from "grammy";
 import { loadConfig, CONFIRM_TTL_MS } from "../config.js";
-import { fmtNum, fmtUsd, shortAddr, strategyLabel } from "../format.js";
+import { fmtNum, fmtUsd, fmtMoney, shortAddr, strategyLabel } from "../format.js";
+import { ensureFxRates } from "../engine/fx.js";
 import { installHtml, sigLine } from "./html.js";
 import { type PositionSnapshot, snapshotOf } from "./pnl-send.js";
 import { registerHistoryUi, showHistory, recordClose } from "./history-ui.js";
@@ -279,7 +280,7 @@ export function createBot(): Bot {
         kind === "claim" ? "Claim fees" : "Remove 100% + close",
         `Pool: ${p.pool_name || shortAddr(String(p.pool))}`,
         `Pos: \`${String(p.position)}\``,
-        `Nilai ${fmtUsd(Number(p.total_value_usd))} | fees ${fmtUsd(Number(p.unclaimed_fees_usd))}`,
+        `Nilai ${fmtMoney(Number(p.total_value_usd))} | fees ${fmtMoney(Number(p.unclaimed_fees_usd))}`,
         cfg.dryRun ? "Mode: DRY_RUN" : "Mode: LIVE",
         `Konfirmasi dalam ${CONFIRM_TTL_MS / 1000}s.`,
       ].join("\n");
@@ -799,7 +800,7 @@ async function showPositions(ctx: Context): Promise<void> {
     }
     const lines = s.data.posList.map((p, i) => {
       const ir = p.in_range == null ? "?" : p.in_range ? "🟢 in" : "🔴 OUT";
-      return `${i + 1}. ${p.pool_name || shortAddr(String(p.pool))}\n   Nilai ${p.total_value_usd == null ? "n/a" : fmtUsd(Number(p.total_value_usd))} | PnL ${p.pnl_usd == null ? "n/a" : `${fmtUsd(Number(p.pnl_usd))} (${fmtNum(Number(p.pnl_pct), 2)}%) estimasi`}\n   Fees ${p.unclaimed_fees_usd == null ? "n/a" : fmtUsd(Number(p.unclaimed_fees_usd))} | ${ir}`;
+      return `${i + 1}. ${p.pool_name || shortAddr(String(p.pool))}\n   Nilai ${p.total_value_usd == null ? "n/a" : fmtMoney(Number(p.total_value_usd))} | PnL ${p.pnl_usd == null ? "n/a" : `${fmtMoney(Number(p.pnl_usd))} (${fmtNum(Number(p.pnl_pct), 2)}%) estimasi`}\n   Fees ${p.unclaimed_fees_usd == null ? "n/a" : fmtMoney(Number(p.unclaimed_fees_usd))} | ${ir}`;
     });
     const kb = new InlineKeyboard();
     s.data.posList.forEach((_, i) => {
@@ -869,7 +870,7 @@ async function finishSwapAmount(ctx: Context, amtText: string): Promise<void> {
       `Out  \`${quote.outputMint}\``,
       `UI in: ${fmtNum(amt)} | atomic in: ${quote.inAmount}`,
       `Est out: ${quote.outAmount}`,
-      `Est USD: ${fmtUsd(usdEstimate)}`,
+      `Est: ${fmtMoney(usdEstimate)}`,
       cfg.dryRun ? "Mode: DRY_RUN" : "Mode: LIVE",
       `Konfirmasi dalam ${CONFIRM_TTL_MS / 1000}s.`,
     ].join("\n");

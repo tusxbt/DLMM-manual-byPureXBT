@@ -11,7 +11,7 @@ import { encryptionKey } from "../users/crypto.js";
 import { getBalances, getConnection } from "../engine/connection.js";
 import { getSolUsd } from "../engine/prices.js";
 import { loadConfig, CONFIRM_TTL_MS } from "../config.js";
-import { fmtNum, fmtUsd } from "../format.js";
+import { fmtNum, fmtUsd, fmtMoney } from "../format.js";
 import { getSession, askPrompt, RETRY } from "./session.js";
 import { createConfirm } from "../engine/confirm.js";
 import { presentConfirm } from "./confirm-ui.js";
@@ -46,7 +46,7 @@ export async function showWallet(ctx: Context): Promise<void> {
   }
   const b = await getBalances(solUsd);
   const cfg = loadConfig({ requireTelegram: false, skipWallet: true });
-  const u = (x: number) => (solUsd ? fmtUsd(x) : "n/a");
+  const u = (x: number) => (solUsd ? fmtMoney(x) : "n/a");
   const kb = new InlineKeyboard().text("🔄 Refresh", "w:show").text("📤 Withdraw SOL", "w:wd");
   if (isOwner()) kb.row().text("🛡 Admin", "adm:home");
   await ctx.reply(
@@ -74,7 +74,7 @@ export function walletText(w: {
     `👛 Wallet${w.owner ? " · owner" : ""}`,
     section(null, [`\`${w.wallet}\``, `[Solscan](https://solscan.io/account/${w.wallet})`]),
     section("💰 Saldo", [
-      kv("SOL", `${fmtNum(w.sol)}${w.solUsd != null ? ` (${fmtUsd(w.solUsd)})` : ""}`),
+      kv("SOL", `${fmtNum(w.sol)}${w.solUsd != null ? ` (${fmtMoney(w.solUsd)})` : ""}`),
       kv("USDC", fmtNum(w.usdc)),
       kv("Total", w.totalUsd == null ? "n/a" : fmtUsd(w.totalUsd)),
     ]),

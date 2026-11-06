@@ -7,6 +7,7 @@ import { fileURLToPath } from "node:url";
 import { createCanvas, GlobalFonts, type SKRSContext2D } from "@napi-rs/canvas";
 import type { Candle } from "../engine/ohlcv.js";
 import { paintCardBackground, preloadPnlBackground } from "./card-bg.js";
+import { activeDisplay, fmtMoney } from "../display-money.js";
 export { preloadPnlBackground } from "./card-bg.js";
 
 const require = createRequire(import.meta.url);
@@ -70,8 +71,7 @@ const RED = "#ef4444";
 const AMBER = "#f59e0b";
 const BLUE = "#60a5fa";
 
-const usd = (n: number | null | undefined) =>
-  n == null || !Number.isFinite(n) ? "n/a" : `${n < 0 ? "-" : ""}$${Math.abs(n).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+const usd = (n: number | null | undefined) => fmtMoney(n, { ...activeDisplay(), na: "n/a" });
 
 export function fmtPx(n: number | null | undefined): string {
   if (n == null || !Number.isFinite(n) || n <= 0) return "?";
@@ -133,10 +133,7 @@ const thin = (ctx: SKRSContext2D, px: number) => (ctx.font = `${px}px CardText, 
 const semi = (ctx: SKRSContext2D, px: number) => (ctx.font = `${px}px CardSemi, CardSansBold, sans-serif`);
 const numf = (ctx: SKRSContext2D, px: number) => (ctx.font = `${px}px CardNum, CardSansBold, sans-serif`);
 
-const money = (n: number | null | undefined, sign = false) =>
-  n == null || !Number.isFinite(n)
-    ? "n/a"
-    : `${sign ? (n >= 0 ? "+" : "-") : n < 0 ? "-" : ""}$${Math.abs(n).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+const money = (n: number | null | undefined, sign = false) => fmtMoney(n, { sign, ...activeDisplay(), na: "n/a" });
 
 export function renderPnlCard(d: PnlCardData): Buffer {
   ensureFonts();
