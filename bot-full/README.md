@@ -219,13 +219,21 @@ Without the key the wallet files are useless; with both, anyone can spend the fu
 
 ## 🔎 Pool scanner (read-only)
 
-`npm run scan` atau `/scan` di Telegram: scan pool DLMM pasangan SOL dari Meteora datapi, ranking skor 0–100
-(fee APR 40% · fees 24h 25% · volume 24h 20% · TVL 15%, log-scaled, −5 per risk flag). Hasil top N disimpan di
-`DATA_DIR/scan/latest.json`. **Tidak ada transaksi / auto-trade.** `/scan` memakai cache ≤10 menit.
+`npm run scan` atau `/scan` di Telegram: scan pool DLMM pasangan SOL dari Meteora datapi (3×100 pool),
+lalu hard-filter Syra LP dan ranking skor 0–100 (fee APR 40% · fees 24h 25% · volume 24h 20% · TVL 15%,
+log-scaled, −5 per risk flag). Top 15 → `DATA_DIR/scan/latest.json`. **Tidak ada transaksi / auto-trade /
+scheduler** (`SCAN_INTERVAL_MINUTES=10` hanya konfigurasi target).
 
-Risk flags: `LOW_TVL`, `APR_VS_TVL` (APR >2000% di TVL <$100K), `NEW_POOL`, `LOW_FEE_VOL` (fee/volume < ½ base fee),
-`VOL_SPIKE` (vol >50× TVL), `FREEZE_AUTH`, `UNVERIFIED`, `FEW_HOLDERS` (<500). Mint authority tidak tersedia murah di datapi → tidak dicek.
+Hard filters: SOL + Meteora blacklist; TVL $10K–$100K; Vol24h ≥ $25K; bin step 100–200; umur ≥ 6 jam;
+holder ≥ 1000; top-10 holder ≤ 20%; market cap ≥ $500K; buang freeze/mint authority; unverified **tidak**
+dibuang (default); `SCAN_BLACKLIST_MINTS` (koma). Mint/freeze/top10 dari RPC; mcap dari Jupiter→DexScreener.
+Data wajib gagal fetch → pool dibuang (alasan di `dropped[]`), tidak pernah dianggap lolos.
 
-Env: `SCAN_MIN_TVL` (10000), `SCAN_MIN_VOL24H` (25000), `SCAN_MAX_BIN_STEP` (200), `SCAN_MIN_BIN_STEP` (1), `SCAN_TOP_N` (15, max 50),
-`SCAN_PAGES` (3 × 100 pool, urut volume), `SCAN_NEW_POOL_HOURS` (24). HTTP opsional: `SCAN_HTTP_TOKEN` (wajib untuk aktif),
-`SCAN_HTTP_PORT` (8787), `SCAN_HTTP_HOST` (127.0.0.1) → `GET /scan/latest` dengan `Authorization: Bearer <token>`.
+Risk flags (soft): `LOW_TVL`, `APR_VS_TVL`, `NEW_POOL`, `LOW_FEE_VOL`, `VOL_SPIKE`, `FEW_HOLDERS`.
+
+Env: `SCAN_MIN_TVL`, `SCAN_MAX_TVL`, `SCAN_MIN_VOL24H`, `SCAN_MAX_BIN_STEP`, `SCAN_MIN_BIN_STEP`,
+`SCAN_TOP_N`, `SCAN_PAGES`, `SCAN_NEW_POOL_HOURS`, `SCAN_MIN_POOL_AGE_HOURS`, `SCAN_MIN_HOLDERS`,
+`SCAN_MAX_TOP10_HOLDER_PCT`, `SCAN_MIN_MARKET_CAP`, `SCAN_EXCLUDE_FREEZE_AUTH`, `SCAN_EXCLUDE_MINT_AUTH`,
+`SCAN_EXCLUDE_UNVERIFIED` (false), `SCAN_BLACKLIST_MINTS`, `SCAN_INTERVAL_MINUTES` (10).
+HTTP opsional: `SCAN_HTTP_TOKEN`, `SCAN_HTTP_PORT`, `SCAN_HTTP_HOST`.
+
