@@ -220,6 +220,7 @@ function statsOf(rs: PnlRecord[]): CardStats {
   };
 }
 
+
 const KICK: Record<PeriodKind, string> = { d: "Daily PnL", w: "Weekly PnL", m: "Monthly PnL" };
 
 /** Day: one bar per position (close order). Week/Month: one bar per KST day. */
@@ -241,7 +242,7 @@ export function periodCardData(list: PnlRecord[], kind: PeriodKind, offset = 0, 
     title: p.label,
     ...rest,
     bars,
-    barsLabel: kind === "d" ? "PnL per posisi" : kind === "w" ? "PnL per hari (Sen–Min, KST)" : "PnL per hari (KST)",
+    barsLabel: kind === "d" ? "PnL kumulatif" : kind === "w" ? "PnL kumulatif (Sen–Min, KST)" : "PnL kumulatif (KST)",
     footer: `${kind === "d" ? "harian" : kind === "w" ? "mingguan" : "bulanan"} · ${kstStamp(now)}`,
   };
 }
@@ -284,7 +285,7 @@ export function dailyCardData(list: PnlRecord[], days: number, now = new Date())
   const rs = list.filter((r) => ds.some((d) => d.key === kstDay(r.closed_at)));
   const { exitUsd: _e, ...st } = statsOf(rs);
   void _e;
-  return { kicker: "Daily PnL", title: `${days} hari terakhir`, ...st, bars: ds.map((a) => ({ label: dayLabel(a.key), pnlUsd: a.pnlUsd, empty: a.count === 0 })), footer: `daily · ${kstStamp(now)}`, days: ds } as SummaryCardData & { days: Agg[] };
+  return { kicker: "Daily PnL", title: `${days} hari terakhir`, ...st, bars: ds.map((a) => ({ label: dayLabel(a.key), pnlUsd: a.pnlUsd, empty: a.count === 0 })), barsLabel: "PnL kumulatif", footer: `daily · ${kstStamp(now)}`, days: ds } as SummaryCardData & { days: Agg[] };
 }
 
 const fmtDur = (ms: number) => {
@@ -311,7 +312,7 @@ export function tokenCardData(list: PnlRecord[], key: string, now = new Date()):
     worst: null,
     extra: [["DURASI", opens.length ? fmtDur(durMs) : "n/a"], ["PERIODE", range]],
     bars: rs.map((r, i) => ({ label: `#${i + 1}`, pnlUsd: r.pnl_usd ?? 0, empty: r.pnl_usd == null })),
-    barsLabel: "PnL per posisi (urut waktu tutup)",
+    barsLabel: "PnL kumulatif",
     footer: `${rs.length} posisi · ${kstStamp(now)}`,
   };
 }

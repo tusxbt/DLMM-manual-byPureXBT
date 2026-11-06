@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
 import { paintCardBackground, preloadPnlBackground, resetBgCache, BUNDLED_PNL_BG, loadBg } from "../src/render/card-bg.js";
-import { renderSummaryCard } from "../src/render/daily-card.js";
+import { renderSummaryCard, drawCumulativeStep } from "../src/render/daily-card.js";
 import { renderPnlCard } from "../src/render/pnl-card.js";
 import { createCanvas } from "@napi-rs/canvas";
 
@@ -13,8 +13,8 @@ test("shared background module: both cards read the same loader", async () => {
   assert.match(srcDaily, /paintCardBackground/);
   assert.match(srcPos, /paintCardBackground/);
   assert.ok(!/bgCache/.test(srcPos));
-  assert.match(srcDaily, /chartless|Chartless|bars: SummaryBar\[]/);
-  assert.ok(!/monochrome line chart|drawCandles/.test(srcDaily));
+  assert.match(srcDaily, /drawCumulativeStep|PnL kumulatif/);
+  assert.ok(!/drawCandles/.test(srcDaily));
 
   resetBgCache();
   const c = createCanvas(100, 80).getContext("2d");
@@ -53,4 +53,23 @@ test("changing one background path feeds every card type", async () => {
   } as never);
   assert.equal(daily.subarray(1, 4).toString(), "PNG");
   assert.equal(pos.subarray(1, 4).toString(), "PNG");
+});
+
+test("cumulative step chart fills the daily card middle", () => {
+  const bars = [
+    { label: "PIRATE", pnlUsd: 42.5 },
+    { label: "ZELDA", pnlUsd: -18.2 },
+    { label: "SLING", pnlUsd: 12.4 },
+    { label: "BONK", pnlUsd: -7.5 },
+    { label: "WIF", pnlUsd: 5.1 },
+  ];
+  const png = renderSummaryCard({
+    kicker: "Daily PnL", title: "06 Nov 2026", totalUsd: 34.3, pnlPct: 1.6, pnlSol: 0.35,
+    count: 5, wins: 3, winRate: 60, capitalUsd: 2160, feesUsd: 8, best: { label: "PIRATE", pnlUsd: 42.5 },
+    worst: { label: "ZELDA", pnlUsd: -18.2 }, bars, barsLabel: "PnL kumulatif", footer: "harian · test",
+  });
+  assert.equal(png.subarray(1, 4).toString(), "PNG");
+  assert.ok(png.length > 5000);
+  const c = createCanvas(1200, 260).getContext("2d");
+  drawCumulativeStep(c, bars, "PnL kumulatif", { x: 40, y: 30, w: 1120, h: 200 });
 });
