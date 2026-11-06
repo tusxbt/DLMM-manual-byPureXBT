@@ -94,3 +94,32 @@ test("period + token cards: aggregates, bars, buttons", () => {
   for (const c of ["hi:per:d:0", "hi:per:w:0", "hi:per:m:0", "hi:per:w:-2", "hi:per:w:0", "hi:pcd:w:-1"]) assert.ok(cbs.includes(c), c);
   assert.ok(JSON.stringify(UI.tokenSummary(list as never, "MINTA").kb.inline_keyboard).includes("hi:tc:MINTA"));
 });
+
+test("summary cards drop dust PnL below SMALL_PNL_USD", () => {
+  const now = new Date("2026-11-05T03:00:00Z");
+  const list = [
+    { ...rec(1, 5, "2026-11-05T01:00:00Z"), pnl_sol: 0.05, capital_usd: 100 },
+    { ...rec(2, -0.01, "2026-11-05T01:30:00Z"), pnl_sol: -0.0001, capital_usd: 50 },
+    { ...rec(3, 0, "2026-11-05T02:00:00Z"), pnl_sol: 0, capital_usd: 40 },
+    { ...rec(4, -2, "2026-11-05T02:30:00Z"), pnl_sol: -0.02, capital_usd: 100 },
+    { ...rec(5, 0.99, "2026-11-05T02:45:00Z"), pnl_sol: 0.01, capital_usd: 80 }, // still dust (< 1)
+    { ...rec(6, 1, "2026-11-03T02:00:00Z"), pnl_sol: 0.01, capital_usd: 100 }, // exactly $1 keeps
+  ];
+  assert.equal(UI.SMALL_PNL_USD, 1);
+  assert.equal(UI.significantHistory(list as never).length, 3); // 5, -2, 1
+  const day = UI.periodCardData(list as never, "d", 0, now);
+  assert.equal(day.count, 2); // 5 and -2 today
+  assert.equal(day.totalUsd, 3);
+  assert.equal(day.capitalUsd, 200);
+  assert.equal(day.wins, 1);
+  assert.equal(day.winRate, 50);
+  assert.equal(day.bars.length, 2);
+  assert.ok(day.bars.every((b) => Math.abs(b.pnlUsd) >= UI.SMALL_PNL_USD));
+  assert.ok(!day.bars.some((b) => Math.abs(b.pnlUsd) < 1));
+  const tk = UI.tokenCardData(list as never, "MINTA", now)!;
+  assert.equal(tk.count, 3);
+  assert.equal(tk.totalUsd, 4); // 5 - 2 + 1
+  assert.equal(tk.capitalUsd, 300);
+  assert.ok(tk.bars.every((b) => Math.abs(b.pnlUsd) >= 1));
+});
+

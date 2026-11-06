@@ -197,6 +197,19 @@ export function daysPage(list: PnlRecord[], days: number, now = new Date()): { t
 }
 
 type CardStats = Pick<SummaryCardData, "totalUsd" | "pnlPct" | "pnlSol" | "count" | "wins" | "winRate" | "capitalUsd" | "feesUsd" | "best" | "worst"> & { exitUsd: number | null };
+
+/** Positions with |PnL USD| below this are dust — hidden from summary cards & charts. */
+export const SMALL_PNL_USD = 1;
+
+export function isSignificantPnl(r: Pick<PnlRecord, "pnl_usd">, minUsd = SMALL_PNL_USD): boolean {
+  return r.pnl_usd != null && Number.isFinite(r.pnl_usd) && Math.abs(r.pnl_usd as number) >= minUsd;
+}
+
+/** Drop dust closes before summary-card stats / cumulative chart. */
+export function significantHistory(list: PnlRecord[], minUsd = SMALL_PNL_USD): PnlRecord[] {
+  return list.filter((r) => isSignificantPnl(r, minUsd));
+}
+
 function statsOf(rs: PnlRecord[]): CardStats {
   const known = rs.filter((r) => r.pnl_usd != null);
   const totalUsd = known.reduce((s, r) => s + (r.pnl_usd as number), 0);
@@ -226,14 +239,14 @@ const KICK: Record<PeriodKind, string> = { d: "Daily PnL", w: "Weekly PnL", m: "
 /** Day: one bar per position (close order). Week/Month: one bar per KST day. */
 export function periodCardData(list: PnlRecord[], kind: PeriodKind, offset = 0, now = new Date()): SummaryCardData {
   const p = periodRange(kind, offset, now);
-  const rs = inPeriod(list, p);
+  const rs = significantHistory(inPeriod(list, p));
   const st = statsOf(rs);
   const bars =
     kind === "d"
-      ? [...rs].sort((a, b) => Date.parse(a.closed_at) - Date.parse(b.closed_at)).map((r) => ({ label: tokenLabel(r), pnlUsd: r.pnl_usd ?? 0, empty: r.pnl_usd == null }))
+      ? [...rs].sort((a, b) => Date.parse(a.closed_at) - Date.parse(b.closed_at)).map((r) => ({ label: tokenLabel(r), pnlUsd: r.pnl_usd as number }))
       : p.days.map((k) => {
           const ds = rs.filter((r) => kstDay(r.closed_at) === k);
-          return { label: kind === "w" ? `${["Sen", "Sel", "Rab", "Kam", "Jum", "Sab", "Min"][(new Date(`${k}T00:00:00Z`).getUTCDay() + 6) % 7]} ${Number(k.slice(8))}` : String(Number(k.slice(8))), pnlUsd: ds.reduce((s, r) => s + (r.pnl_usd ?? 0), 0), empty: ds.length === 0 };
+          return { label: kind === "w" ? `${["Sen", "Sel", "Rab", "Kam", "Jum", "Sab", "Min"][(new Date(`${k}T00:00:00Z`).getUTCDay() + 6) % 7]} ${Number(k.slice(8))}` : String(Number(k.slice(8))), pnlUsd: ds.reduce((s, r) => s + (r.pnl_usd as number), 0), empty: ds.length === 0 };
         });
   const { exitUsd: _e, ...rest } = st;
   void _e;
@@ -281,8 +294,9 @@ export function periodView(list: PnlRecord[], kind: PeriodKind, offset = 0, now 
 }
 
 export function dailyCardData(list: PnlRecord[], days: number, now = new Date()): SummaryCardData {
-  const ds = byDay(list, days, now);
-  const rs = list.filter((r) => ds.some((d) => d.key === kstDay(r.closed_at)));
+  const sig = significantHistory(list);
+  const ds = byDay(sig, days, now);
+  const rs = sig.filter((r) => ds.some((d) => d.key === kstDay(r.closed_at)));
   const { exitUsd: _e, ...st } = statsOf(rs);
   void _e;
   return { kicker: "Daily PnL", title: `${days} hari terakhir`, ...st, bars: ds.map((a) => ({ label: dayLabel(a.key), pnlUsd: a.pnlUsd, empty: a.count === 0 })), barsLabel: "PnL kumulatif", footer: `daily · ${kstStamp(now)}`, days: ds } as SummaryCardData & { days: Agg[] };
@@ -296,7 +310,8 @@ const fmtDur = (ms: number) => {
 
 /** Token aggregate: all positions of one token merged into one card. */
 export function tokenCardData(list: PnlRecord[], key: string, now = new Date()): SummaryCardData | null {
-  const rs = list.filter((r) => r.token === key || r.token.startsWith(key)).sort((a, b) => Date.parse(a.closed_at) - Date.parse(b.closed_at));
+  const all = list.filter((r) => r.token === key || r.token.startsWith(key)).sort((a, b) => Date.parse(a.closed_at) - Date.parse(b.closed_at));
+  const rs = significantHistory(all);
   if (!rs.length) return null;
   const st = statsOf(rs);
   const opens = rs.map((r) => (r.opened_at ? Date.parse(r.opened_at) : NaN)).filter(Number.isFinite);
@@ -311,7 +326,7 @@ export function tokenCardData(list: PnlRecord[], key: string, now = new Date()):
     best: null,
     worst: null,
     extra: [["DURASI", opens.length ? fmtDur(durMs) : "n/a"], ["PERIODE", range]],
-    bars: rs.map((r, i) => ({ label: `#${i + 1}`, pnlUsd: r.pnl_usd ?? 0, empty: r.pnl_usd == null })),
+    bars: rs.map((r, i) => ({ label: `#${i + 1}`, pnlUsd: r.pnl_usd as number })),
     barsLabel: "PnL kumulatif",
     footer: `${rs.length} posisi · ${kstStamp(now)}`,
   };

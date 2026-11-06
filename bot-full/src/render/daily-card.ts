@@ -249,20 +249,13 @@ export function renderSummaryCard(d: SummaryCardData): Buffer {
   center("TUSVICIOUS", 78, 16, MUTED, semi);
   center(`${d.kicker}  ·  ${d.title}`, 128, 28, TEXT, semi);
 
-  // big PnL $ — same Y as sample 1472434 (do not lower)
+  // big PnL $ — no sub-line (% / SOL / count / win rate)
   center(money(d.totalUsd, true), 270, 112, col, numf);
-  const sub = [
-    d.pnlPct == null ? null : `${d.pnlPct >= 0 ? "+" : "−"}${Math.abs(d.pnlPct).toFixed(2)}%`,
-    d.pnlSol == null ? null : `${d.pnlSol >= 0 ? "+" : "−"}${Math.abs(d.pnlSol).toFixed(4)} SOL`,
-    `${d.count} posisi`,
-    `win rate ${d.winRate == null ? "n/a" : `${d.winRate.toFixed(0)}%`}`,
-  ].filter(Boolean).join("  ·  ");
-  center(sub || "—", 330, 28, d.count ? col : MUTED, semi);
-  if (!d.count) center("Belum ada posisi ditutup", 380, 18, MUTED);
+  if (!d.count) center("Belum ada posisi ditutup", 340, 18, MUTED);
 
-  // cumulative step chart fills the empty middle
+  // cumulative step chart fills the empty middle (sub-line removed → more room)
   if (d.count && (d.bars?.length ?? 0) > 0) {
-    drawCumulativeStep(ctx, d.bars, d.barsLabel || "PnL kumulatif", { x: 70, y: 370, w: W - 140, h: 230 });
+    drawCumulativeStep(ctx, d.bars, d.barsLabel || "PnL kumulatif", { x: 70, y: 340, w: W - 140, h: 260 });
   }
 
   // stats row — same y-band as the position card
